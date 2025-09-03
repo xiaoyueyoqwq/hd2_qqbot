@@ -132,6 +132,15 @@ async def _async_main() -> None:
         await hd2_cache_service.initialize()
         await api_cache_manager.start()
         bot_logger.info("缓存系统启动完成")
+        
+        # 初始化智能翻译缓存轮转系统
+        try:
+            from utils.cache_rotation_integration import cache_rotation_integration
+            await cache_rotation_integration.initialize_cache_rotations()
+            bot_logger.info("智能翻译缓存系统启动完成")
+        except Exception as e:
+            bot_logger.error(f"智能翻译缓存系统启动失败: {e}")
+            # 不阻止程序启动，但记录错误
 
         # 2. 初始化核心应用
         core_app = CoreApp()
@@ -161,6 +170,14 @@ async def _async_main() -> None:
 
     finally:
         bot_logger.info("检测到服务停止，开始全局清理...")
+        
+        # 停止智能翻译缓存轮转系统
+        try:
+            from utils.cache_rotation_integration import cache_rotation_integration
+            await cache_rotation_integration.stop_all_cache_rotations()
+            bot_logger.info("智能翻译缓存系统已停止")
+        except Exception as e:
+            bot_logger.error(f"停止智能翻译缓存系统时发生错误: {e}")
         
         # 停止缓存系统
         try:

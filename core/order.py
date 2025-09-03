@@ -65,7 +65,7 @@ class TranslationService:
                     "source_lang": "en",  # 指定源语言为英语
                     "style": "casual",  # 使用随意口语化风格，适合游戏内容
                     "context": "entertainment",  # 娱乐上下文，适合游戏
-                    "fast_mode": True,  # 启用快速模式
+                    "fast_mode": False,  # 不启用快速模式
                     "preserve_format": True  # 保留格式
                 }
                 

@@ -53,10 +53,10 @@ class CoreApp:
                 if await self.plugin_manager.handle_message(handler, message.content):
                     return
         except asyncio.TimeoutError:
-            await handler.send_text("⚠️ 处理超时，请稍后重试")
+            await handler.send_text("\n⚠️ 处理超时，请稍后重试")
         except Exception:
             bot_logger.exception("处理消息异常")
-            await handler.send_text("⚠️ 处理消息时发生错误，请稍后重试")
+            await handler.send_text("\n⚠️ 处理消息时发生错误，请稍后重试")
 
     async def cleanup(self):
         """

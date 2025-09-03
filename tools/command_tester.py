@@ -219,6 +219,16 @@ class CommandTester:
             await api_cache_manager.start()
             bot_logger.info("缓存系统启动完成")
             
+            # 初始化智能翻译缓存轮转系统
+            bot_logger.info("正在初始化智能翻译缓存系统...")
+            try:
+                from utils.cache_rotation_integration import cache_rotation_integration
+                await cache_rotation_integration.initialize_cache_rotations()
+                bot_logger.info("智能翻译缓存系统初始化完成")
+            except Exception as e:
+                bot_logger.error(f"智能翻译缓存系统初始化失败: {e}")
+                # 不阻止程序启动，但记录错误
+            
             # 初始化插件
             bot_logger.info("正在初始化插件...")
             await self.plugin_manager.auto_discover_plugins()
@@ -242,6 +252,14 @@ class CommandTester:
         """停止服务"""
         if not self.running:
             return
+        
+        # 停止智能翻译缓存轮转系统
+        try:
+            from utils.cache_rotation_integration import cache_rotation_integration
+            await cache_rotation_integration.stop_all_cache_rotations()
+            bot_logger.info("智能翻译缓存系统已停止")
+        except Exception as e:
+            bot_logger.error(f"停止智能翻译缓存系统时发生错误: {e}")
         
         # 停止缓存系统
         try:

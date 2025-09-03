@@ -33,7 +33,7 @@ class StatsPlugin(Plugin):
         
         try:
             # 发送"正在查询"的提示消息
-            await handler.send_text("🔍 正在查询银河战争统计数据，请稍候...")
+            await handler.send_text("\n🔍 正在查询银河战争统计数据，请稍候...")
             
             # 获取统计数据
             stats_data = await stats_service.get_war_summary()
@@ -46,7 +46,7 @@ class StatsPlugin(Plugin):
             else:
                 # 数据获取失败
                 error_message = (
-                    "❌ 抱歉，无法获取当前战争统计数据。\n"
+                    "\n❌ 抱歉，无法获取当前战争统计数据。\n"
                     "可能的原因：\n"
                     "• API 服务暂时不可用\n"
                     "• 网络连接问题\n"
@@ -58,6 +58,6 @@ class StatsPlugin(Plugin):
                 
         except Exception as e:
             bot_logger.error(f"处理 /stats 命令时发生异常: {e}")
-            await handler.send_text("⚠️ 处理请求时发生错误，请稍后重试。")
+            await handler.send_text("\n⚠️ 处理请求时发生错误，请稍后重试。")
 
 
