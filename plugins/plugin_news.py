@@ -14,11 +14,11 @@ if project_root not in sys.path:
 
 from core.plugin import Plugin, on_command
 from utils.message_handler import MessageHandler
-from core.msg import dispatch_service
+from core.news import dispatch_service
 from utils.logger import bot_logger
 
 
-class MsgPlugin(Plugin):
+class NewsPlugin(Plugin):
     """快讯插件"""
     
     def __init__(self):
@@ -87,7 +87,7 @@ class MsgPlugin(Plugin):
                     "• API 服务暂时不可用\n"
                     "• 网络连接问题\n"
                     "• 服务器维护中\n\n"
-                    "请稍后重试，为了超级地球！🌍"
+                    "如频繁遇到此问题请与民主官联系！🌍"
                 )
                 await handler.send_text(error_message)
                 bot_logger.warning(f"为用户 {handler.user_id} 获取快讯数据失败")

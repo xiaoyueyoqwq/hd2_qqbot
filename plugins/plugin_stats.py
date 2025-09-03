@@ -40,7 +40,7 @@ class StatsPlugin(Plugin):
             
             if stats_data:
                 # 格式化并发送统计数据
-                formatted_message = stats_service.format_stats_message(stats_data)
+                formatted_message = await stats_service.format_stats_message(stats_data)
                 await handler.send_text(formatted_message)
                 bot_logger.info(f"成功为用户 {handler.user_id} 提供战争统计数据")
             else:
@@ -51,7 +51,7 @@ class StatsPlugin(Plugin):
                     "• API 服务暂时不可用\n"
                     "• 网络连接问题\n"
                     "• 服务器维护中\n\n"
-                    "请稍后重试，为了超级地球！🌍"
+                    "如频繁遇到此问题请与民主官联系！🌍"
                 )
                 await handler.send_text(error_message)
                 bot_logger.warning(f"为用户 {handler.user_id} 获取战争统计数据失败")

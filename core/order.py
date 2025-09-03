@@ -24,98 +24,15 @@ hd2_api_spec.loader.exec_module(hd2_api_module)
 hd2_api = hd2_api_module.hd2_api
 
 from utils.logger import bot_logger
+from utils.translation_cache import translation_cache
+from utils.translation_retry_queue import translation_retry_queue
+from core.news import TranslationService, clean_game_text
+from datetime import datetime
 
-class TranslationService:
-    """AI智能翻译服务"""
-    
-    def __init__(self):
-        self.api_url = "https://uapis.cn/api/v1/ai/translate"
-        self.timeout = aiohttp.ClientTimeout(total=20)  # 增加超时时间
-        self.headers = {
-            "Content-Type": "application/json",
-            "User-Agent": "hd2_qqbot/1.0"
-        }
-    
-    async def translate_text(self, text: str, to_lang: str = "zh") -> Optional[str]:
-        """
-        使用AI智能翻译文本
-        
-        Args:
-            text: 待翻译的文本
-            to_lang: 目标语言代码，默认为中文(zh)
-        
-        Returns:
-            翻译后的文本，失败时返回原文
-        """
-        if not text or not text.strip():
-            return text
-        
-        # 如果文本很短，跳过翻译
-        if len(text.strip()) < 3:
-            return text
-            
-        try:
-            # 构建完整URL（包含查询参数）
-            url = f"{self.api_url}?target_lang={to_lang}"
-            
-            async with aiohttp.ClientSession(timeout=self.timeout) as session:
-                # 构建请求数据 - 使用新的AI翻译接口
-                payload = {
-                    "text": text.strip(),
-                    "source_lang": "en",  # 指定源语言为英语
-                    "style": "casual",  # 使用随意口语化风格，适合游戏内容
-                    "context": "entertainment",  # 娱乐上下文，适合游戏
-                    "fast_mode": False,  # 不启用快速模式
-                    "preserve_format": True  # 保留格式
-                }
-                
-                bot_logger.debug(f"AI翻译请求: '{text}' -> {to_lang}")
-                bot_logger.debug(f"请求载荷: {payload}")
-                
-                async with session.post(url, json=payload, headers=self.headers) as response:
-                    response_text = await response.text()
-                    bot_logger.debug(f"AI翻译API响应状态: {response.status}")
-                    bot_logger.debug(f"AI翻译API响应内容: {response_text}")
-                    
-                    if response.status == 200:
-                        try:
-                            data = await response.json()
-                            
-                            # 检查新API的响应格式
-                            if data.get("code") == 200 and "data" in data:
-                                translated_text = data["data"].get("translated_text", "").strip()
-                                confidence = data["data"].get("confidence_score", 0)
-                                
-                                if translated_text and translated_text != text.strip():
-                                    bot_logger.info(f"AI翻译成功 (置信度: {confidence:.2f}): '{text}' -> '{translated_text}'")
-                                    return translated_text
-                                else:
-                                    bot_logger.warning(f"AI翻译结果为空或与原文相同: '{text}'")
-                                    return text
-                            else:
-                                error_msg = data.get('message', 'Unknown error')
-                                bot_logger.warning(f"AI翻译API返回错误: {error_msg}")
-                                return text
-                        except Exception as json_error:
-                            bot_logger.error(f"解析AI翻译API响应JSON失败: {json_error}")
-                            return text
-                    else:
-                        bot_logger.warning(f"AI翻译API请求失败: 状态码 {response.status}")
-                        bot_logger.warning(f"错误响应: {response_text}")
-                        return text
-                        
-        except asyncio.TimeoutError:
-            bot_logger.error("AI翻译API请求超时")
-            return text
-        except aiohttp.ClientError as e:
-            bot_logger.error(f"AI翻译API网络错误: {e}")
-            return text
-        except Exception as e:
-            bot_logger.error(f"AI翻译请求异常: {e}")
-            return text
+
 
 class OrderService:
-    """最高命令服务（基于缓存）"""
+    """最高命令服务（基于智能缓存）"""
     
     def __init__(self):
         self.translation_service = TranslationService()
@@ -141,6 +58,136 @@ class OrderService:
             bot_logger.error(f"从缓存获取最高命令数据时发生错误: {e}")
             return None
     
+    async def refresh_cache_if_needed(self) -> bool:
+        """
+        检查并刷新缓存（如果需要）
+        由轮转系统调用此方法进行定期刷新
+        
+        Returns:
+            True 如果缓存已刷新
+        """
+        try:
+            # 获取最新的命令数据
+            new_orders = await self.get_current_orders()
+            if not new_orders:
+                bot_logger.warning("无法获取新的最高命令数据，跳过缓存刷新")
+                return False
+            
+            # 检查是否需要刷新
+            needs_refresh = await translation_cache.check_content_freshness('orders', new_orders)
+            
+            if needs_refresh:
+                bot_logger.info("开始刷新最高命令缓存...")
+                
+                # 清理过期缓存
+                current_ids = [str(item.get('id', i)) for i, item in enumerate(new_orders)]
+                await translation_cache.clear_outdated_cache('orders', current_ids)
+                
+                # 翻译并缓存新内容
+                await self._translate_and_cache_orders(new_orders)
+                
+                # 更新内容索引
+                await translation_cache.store_content_list('orders', new_orders)
+                
+                # 更新刷新时间戳
+                await translation_cache.update_refresh_timestamp('orders')
+                
+                bot_logger.info("最高命令缓存刷新完成")
+                return True
+            
+            # 只在debug级别记录无需刷新的情况，避免频繁日志
+            bot_logger.debug("最高命令内容无变化，跳过缓存刷新")
+            return False
+            
+        except Exception as e:
+            bot_logger.error(f"刷新最高命令缓存时发生错误: {e}")
+            return False
+    
+    async def _translate_and_cache_orders(self, orders: List[Dict[str, Any]]) -> None:
+        """
+        翻译并缓存最高命令数据
+        
+        Args:
+            orders: 最高命令数据列表
+        """
+        for order in orders:
+            try:
+                item_id = str(order.get('id', 0))
+                setting = order.get("setting", {})
+                
+                # 获取需要翻译的内容
+                original_title = setting.get("overrideTitle", "")
+                original_brief = setting.get("overrideBrief", "")
+                original_task = setting.get("taskDescription", "")
+                
+                if not any([original_title, original_brief, original_task]):
+                    continue
+                
+                # 检查是否已有翻译缓存
+                cached_translation = await translation_cache.get_translated_content('orders', item_id)
+                
+                # 构建用于比较的原文
+                original_text = f"{original_title}\n{original_brief}\n{original_task}"
+                
+                # 如果没有缓存或原文发生变化，进行翻译
+                if not cached_translation or cached_translation.get('original_text') != original_text:
+                    bot_logger.info(f"翻译最高命令 #{item_id}...")
+                    
+                    # 翻译各个字段
+                    translated_title = ""
+                    translated_brief = ""
+                    translated_task = ""
+                    
+                    if original_title:
+                        title_result = await self.translation_service.translate_text(original_title, "zh")
+                        if title_result and title_result != original_title:
+                            translated_title = title_result
+                    
+                    if original_brief:
+                        brief_result = await self.translation_service.translate_text(original_brief, "zh")
+                        if brief_result and brief_result != original_brief:
+                            translated_brief = brief_result
+                    
+                    if original_task:
+                        task_result = await self.translation_service.translate_text(original_task, "zh")
+                        if task_result and task_result != original_task:
+                            translated_task = task_result
+                    
+                    # 构建翻译结果（包含原文作为备份）
+                    final_title = translated_title if translated_title else original_title
+                    final_brief = translated_brief if translated_brief else original_brief
+                    final_task = translated_task if translated_task else original_task
+                    translated_text = f"{final_title}\n{final_brief}\n{final_task}"
+                    
+                    # 存储缓存（无论翻译是否成功，都要缓存以避免重复处理）
+                    if translated_text:
+                        # 存储翻译结果
+                        metadata = {
+                            'translated_title': translated_title if translated_title else original_title,
+                            'translated_brief': translated_brief if translated_brief else original_brief,
+                            'translated_task': translated_task if translated_task else original_task,
+                            'original_title': original_title,
+                            'original_brief': original_brief,
+                            'original_task': original_task,
+                            'translation_time': datetime.now().isoformat()
+                        }
+                        
+                        await translation_cache.store_translated_content(
+                            'orders', item_id, original_text, translated_text, metadata
+                        )
+                        if translated_title or translated_brief or translated_task:
+                            bot_logger.debug(f"最高命令 #{item_id} 部分翻译成功并已缓存")
+                        else:
+                            bot_logger.debug(f"最高命令 #{item_id} 翻译失败，但原文已缓存")
+                else:
+                    bot_logger.debug(f"最高命令 #{item_id} 已有有效翻译缓存")
+                    
+                # 添加小延迟避免API调用过快
+                await asyncio.sleep(0.1)
+                
+            except Exception as e:
+                bot_logger.error(f"翻译最高命令 {order.get('id')} 时发生错误: {e}")
+    
     async def format_order_messages(self, orders: List[Dict[str, Any]]) -> List[str]:
         """
         格式化最高命令数据为多条消息
@@ -159,29 +206,49 @@ class OrderService:
             
             for i, order in enumerate(orders, 1):
                 setting = order.get("setting", {})
+                order_id = str(order.get('id', 0))
                 
-                # 获取标题和描述
+                # 获取原始内容
                 title = setting.get("overrideTitle", "未知命令")
                 brief = setting.get("overrideBrief", "")
                 task_desc = setting.get("taskDescription", "")
                 
-                # 翻译标题
-                if title and title != "未知命令":
-                    translated_title = await self.translation_service.translate_text(title, "zh")
-                    if translated_title and translated_title != title:
-                        title = translated_title
+                # 从缓存获取翻译内容
+                translated_title = title
+                translated_brief = brief
+                translated_task = task_desc
                 
-                # 翻译简介
-                if brief:
-                    translated_brief = await self.translation_service.translate_text(brief, "zh")
-                    if translated_brief and translated_brief != brief:
-                        brief = translated_brief
+                if order_id and order_id != '0':
+                    cached_translation = await translation_cache.get_translated_content('orders', order_id)
+                    
+                    if cached_translation and cached_translation.get('metadata'):
+                        metadata = cached_translation['metadata']
+                        cached_title = metadata.get('translated_title', '')
+                        cached_brief = metadata.get('translated_brief', '')
+                        cached_task = metadata.get('translated_task', '')
+                        
+                        if cached_title:
+                            translated_title = cached_title
+                        if cached_brief:
+                            translated_brief = cached_brief
+                        if cached_task:
+                            translated_task = cached_task
+                        
+                        bot_logger.debug(f"使用缓存翻译：最高命令 #{order_id}")
+                    else:
+                        # 如果没有缓存翻译，使用原文（避免重复翻译）
+                        # 翻译应该在缓存阶段完成，这里只是显示
+                        bot_logger.warning(f"最高命令 #{order_id} 没有缓存翻译，使用原文显示")
                 
-                # 翻译任务描述
-                if task_desc:
-                    translated_task = await self.translation_service.translate_text(task_desc, "zh")
-                    if translated_task and translated_task != task_desc:
-                        task_desc = translated_task
+                # 清理游戏格式标签
+                translated_title = clean_game_text(translated_title)
+                translated_brief = clean_game_text(translated_brief)
+                translated_task = clean_game_text(translated_task)
+                
+                # 使用翻译后的内容
+                title = translated_title
+                brief = translated_brief
+                task_desc = translated_task
                 
                 # 构建单个命令的消息
                 message = f"\n📋 最高命令 {i} | HELLDIVERS 2\n"

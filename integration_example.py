@@ -68,7 +68,7 @@ async def main():
 async def test_dispatch_functionality():
     """测试快讯功能"""
     try:
-        from core.msg import dispatch_service
+        from core.news import dispatch_service
         
         # 获取快讯数据（会优先使用缓存）
         dispatches = await dispatch_service.get_dispatches(limit=3)

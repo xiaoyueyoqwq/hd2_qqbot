@@ -20,6 +20,8 @@ if project_root not in sys.path:
 
 from utils.logger import bot_logger
 from utils.translation_cache import translation_cache
+from utils.translation_retry_queue import translation_retry_queue
+from utils.api_retry import APIRetryMixin
 
 
 def clean_game_text(text: str) -> str:
@@ -63,13 +65,14 @@ class TranslationService:
             "User-Agent": "hd2_qqbot/1.0"
         }
     
-    async def translate_text(self, text: str, to_lang: str = "zh") -> Optional[str]:
+    async def translate_text(self, text: str, to_lang: str = "zh", max_retries: int = 3) -> Optional[str]:
         """
-        使用AI智能翻译文本
+        使用AI智能翻译文本（带重试机制）
         
         Args:
             text: 待翻译的文本
             to_lang: 目标语言代码，默认为中文(zh)
+            max_retries: 最大重试次数
         
         Returns:
             翻译后的文本，失败时返回原文
@@ -80,93 +83,131 @@ class TranslationService:
         # 如果文本很短，跳过翻译
         if len(text.strip()) < 3:
             return text
-            
-        try:
-            # 构建完整URL（包含查询参数）
-            url = f"{self.api_url}?target_lang={to_lang}"
-            
-            async with aiohttp.ClientSession(timeout=self.timeout) as session:
-                # 构建请求数据 - 使用新的AI翻译接口
-                payload = {
-                    "text": text.strip(),
-                    "source_lang": "en",  # 指定源语言为英语
-                    "style": "casual",  # 使用随意口语化风格，适合游戏内容
-                    "context": "entertainment",  # 娱乐上下文，适合游戏
-                    "fast_mode": True,  # 启用快速模式
-                    "preserve_format": True  # 保留格式
-                }
-                
-                bot_logger.debug(f"AI翻译请求: '{text}' -> {to_lang}")
-                bot_logger.debug(f"请求载荷: {payload}")
-                
-                async with session.post(url, json=payload, headers=self.headers) as response:
-                    response_text = await response.text()
-                    bot_logger.debug(f"AI翻译API响应状态: {response.status}")
-                    bot_logger.debug(f"AI翻译API响应内容: {response_text}")
-                    
-                    if response.status == 200:
-                        try:
-                            data = await response.json()
-                            
-                            # 检查新API的响应格式
-                            if data.get("code") == 200 and "data" in data:
-                                translated_text = data["data"].get("translated_text", "").strip()
-                                confidence = data["data"].get("confidence_score", 0)
-                                
-                                if translated_text and translated_text != text.strip():
-                                    bot_logger.info(f"AI翻译成功 (置信度: {confidence:.2f}): '{text}' -> '{translated_text}'")
-                                    return translated_text
-                                else:
-                                    bot_logger.warning(f"AI翻译结果为空或与原文相同: '{text}'")
-                                    return text
-                            else:
-                                error_msg = data.get('message', 'Unknown error')
-                                bot_logger.warning(f"AI翻译API返回错误: {error_msg}")
-                                return text
-                        except Exception as json_error:
-                            bot_logger.error(f"解析AI翻译API响应JSON失败: {json_error}")
-                            return text
-                    else:
-                        bot_logger.warning(f"AI翻译API请求失败: 状态码 {response.status}")
-                        bot_logger.warning(f"错误响应: {response_text}")
-                        return text
+        
+        # 构建完整URL（包含查询参数）
+        url = f"{self.api_url}?target_lang={to_lang}"
+        
+        # 构建请求数据 - 使用新的AI翻译接口
+        payload = {
+            "text": text.strip(),
+            "source_lang": "en",  # 指定源语言为英语
+            "style": "casual",  # 使用随意口语化风格，适合游戏内容
+            "context": "entertainment",  # 娱乐上下文，适合游戏
+            "fast_mode": False,  # 不启用快速模式
+            "preserve_format": True  # 保留格式
+        }
+        
+        # 重试逻辑
+        for attempt in range(max_retries + 1):
+            try:
+                async with aiohttp.ClientSession(timeout=self.timeout) as session:
+                    async with session.post(url, json=payload, headers=self.headers) as response:
+                        response_text = await response.text()
                         
-        except asyncio.TimeoutError:
-            bot_logger.error("AI翻译API请求超时")
-            return text
-        except aiohttp.ClientError as e:
-            bot_logger.error(f"AI翻译API网络错误: {e}")
-            return text
-        except Exception as e:
-            bot_logger.error(f"AI翻译请求异常: {e}")
-            return text
+                        if response.status == 200:
+                            try:
+                                data = await response.json()
+                                
+                                # 检查新API的响应格式
+                                if data.get("code") == 200 and "data" in data:
+                                    translated_text = data["data"].get("translated_text", "").strip()
+                                    confidence = data["data"].get("confidence_score", 0)
+                                    
+                                    if translated_text and translated_text != text.strip():
+                                        if attempt > 0:
+                                            bot_logger.info(f"AI翻译成功 (第{attempt+1}次尝试, 置信度: {confidence:.2f}): '{text[:30]}...' -> '{translated_text[:30]}...'")
+                                        else:
+                                            bot_logger.info(f"AI翻译成功 (置信度: {confidence:.2f}): '{text[:30]}...' -> '{translated_text[:30]}...'")
+                                        return translated_text
+                                    else:
+                                        bot_logger.warning(f"AI翻译结果为空或与原文相同: '{text[:30]}...'")
+                                        return text
+                                else:
+                                    error_msg = data.get('message', 'Unknown error')
+                                    if attempt < max_retries:
+                                        bot_logger.warning(f"AI翻译API返回错误 (第{attempt+1}次尝试): {error_msg}，5秒后重试...")
+                                        await asyncio.sleep(5)
+                                        continue
+                                    else:
+                                        bot_logger.error(f"AI翻译API最终失败: {error_msg}")
+                                        return text
+                            except Exception as json_error:
+                                if attempt < max_retries:
+                                    bot_logger.warning(f"解析AI翻译API响应JSON失败 (第{attempt+1}次尝试): {json_error}，5秒后重试...")
+                                    await asyncio.sleep(5)
+                                    continue
+                                else:
+                                    bot_logger.error(f"解析AI翻译API响应JSON最终失败: {json_error}")
+                                    return text
+                        else:
+                            # 非200状态码，进行重试
+                            if attempt < max_retries:
+                                bot_logger.warning(f"AI翻译API请求失败 (第{attempt+1}次尝试): 状态码 {response.status}，5秒后重试...")
+                                if response_text:
+                                    bot_logger.debug(f"错误响应: {response_text}")
+                                await asyncio.sleep(5)
+                                continue
+                            else:
+                                bot_logger.error(f"AI翻译API最终失败: 状态码 {response.status}")
+                                if response_text:
+                                    bot_logger.error(f"错误响应: {response_text}")
+                                return text
+                                
+            except asyncio.TimeoutError:
+                if attempt < max_retries:
+                    bot_logger.warning(f"AI翻译API请求超时 (第{attempt+1}次尝试)，5秒后重试...")
+                    await asyncio.sleep(5)
+                    continue
+                else:
+                    bot_logger.error("AI翻译API请求最终超时")
+                    return text
+            except aiohttp.ClientError as e:
+                if attempt < max_retries:
+                    bot_logger.warning(f"AI翻译API网络错误 (第{attempt+1}次尝试): {e}，5秒后重试...")
+                    await asyncio.sleep(5)
+                    continue
+                else:
+                    bot_logger.error(f"AI翻译API网络最终失败: {e}")
+                    return text
+            except Exception as e:
+                if attempt < max_retries:
+                    bot_logger.warning(f"AI翻译请求异常 (第{attempt+1}次尝试): {e}，5秒后重试...")
+                    await asyncio.sleep(5)
+                    continue
+                else:
+                    bot_logger.error(f"AI翻译请求最终异常: {e}")
+                    return text
+        
+        # 如果所有重试都失败，返回原文
+        return text
 
 
-class DispatchService:
+class DispatchService(APIRetryMixin):
     """快讯服务（基于智能缓存）"""
     
     def __init__(self):
+        super().__init__()
         self.api_url = "https://api.helldivers2.dev/api/v1/dispatches"
         self.timeout = aiohttp.ClientTimeout(total=10)
         self.translation_service = TranslationService()
         
     async def fetch_dispatches_from_api(self) -> Optional[List[Dict[str, Any]]]:
         """
-        从API获取原始快讯数据
+        从API获取原始快讯数据（带重试机制）
         
         Returns:
             快讯列表或None(如果获取失败)
         """
-        try:
-            # 设置必需的headers
-            headers = {
-                'X-Super-Client': 'hd2_qqbot',
-                'X-Super-Contact': 'xiaoyueyoqwq@vaiiya.org',
-                'User-Agent': 'Helldivers2-QQBot/1.0'
-            }
-            
+        # 设置必需的headers
+        headers = {
+            'X-Super-Client': 'hd2_qqbot',
+            'X-Super-Contact': 'xiaoyueyoqwq@vaiiya.org',
+            'User-Agent': 'Helldivers2-QQBot/1.0'
+        }
+        
+        async def _api_call():
             async with aiohttp.ClientSession(timeout=self.timeout) as session:
-                bot_logger.info(f"正在从API获取快讯数据: {self.api_url}")
+                bot_logger.debug(f"正在从API获取快讯数据: {self.api_url}")
                 async with session.get(self.api_url, headers=headers) as response:
                     if response.status == 200:
                         data = await response.json()
@@ -174,21 +215,22 @@ class DispatchService:
                         
                         # 按发布时间排序，最新的在前
                         sorted_data = sorted(data, key=lambda x: x.get('published', ''), reverse=True)
-                        
                         return sorted_data
                     else:
-                        bot_logger.error(f"获取快讯失败，HTTP状态码: {response.status}")
-                        return None
-                        
-        except asyncio.TimeoutError:
-            bot_logger.error("获取快讯超时")
+                        # 返回带状态码的响应对象，让重试机制处理
+                        class APIResponse:
+                            def __init__(self, status):
+                                self.status = status
+                        return APIResponse(response.status)
+        
+        # 使用重试机制调用API
+        result = await self.retry_api_call(_api_call)
+        
+        # 如果结果是APIResponse对象，说明请求失败
+        if hasattr(result, 'status'):
             return None
-        except aiohttp.ClientError as e:
-            bot_logger.error(f"网络请求错误: {e}")
-            return None
-        except Exception as e:
-            bot_logger.error(f"获取快讯时发生未知错误: {e}")
-            return None
+            
+        return result
     
     async def refresh_cache_if_needed(self) -> bool:
         """
@@ -231,6 +273,8 @@ class DispatchService:
                 bot_logger.info("快讯缓存刷新完成")
                 return True
             
+            # 只在debug级别记录无需刷新的情况，避免频繁日志
+            bot_logger.debug("快讯内容无变化，跳过缓存刷新")
             return False
             
         except Exception as e:
@@ -261,16 +305,31 @@ class DispatchService:
                     
                     translated_text = await self.translation_service.translate_text(original_message, "zh")
                     
-                    # 存储翻译结果
-                    metadata = {
-                        'published': dispatch.get('published'),
-                        'type': dispatch.get('type'),
-                        'translation_time': datetime.now().isoformat()
-                    }
-                    
-                    await translation_cache.store_translated_content(
-                        'dispatches', item_id, original_message, translated_text, metadata
-                    )
+                    # 只有翻译成功且与原文不同时才存储缓存
+                    if translated_text and translated_text != original_message:
+                        # 存储翻译结果
+                        metadata = {
+                            'published': dispatch.get('published'),
+                            'type': dispatch.get('type'),
+                            'translation_time': datetime.now().isoformat()
+                        }
+                        
+                        await translation_cache.store_translated_content(
+                            'dispatches', item_id, original_message, translated_text, metadata
+                        )
+                        bot_logger.debug(f"快讯 #{item_id} 翻译成功并已缓存")
+                    else:
+                        # 翻译失败，添加到重试队列
+                        metadata = {
+                            'published': dispatch.get('published'),
+                            'type': dispatch.get('type'),
+                            'failed_at': datetime.now().isoformat()
+                        }
+                        
+                        await translation_retry_queue.add_retry_task(
+                            'dispatches', item_id, original_message, metadata
+                        )
+                        bot_logger.info(f"快讯 #{item_id} 翻译失败，已添加到重试队列")
                 else:
                     bot_logger.debug(f"快讯 #{item_id} 已有有效翻译缓存")
                     
@@ -297,7 +356,7 @@ class DispatchService:
             cached_dispatches = await translation_cache.get_content_list('dispatches')
             
             if not cached_dispatches:
-                bot_logger.warning("缓存中没有快讯数据，尝试直接从API获取")
+                bot_logger.info("缓存中没有快讯数据，尝试直接从API获取")
                 # 如果缓存为空，直接从API获取并缓存
                 api_data = await self.fetch_dispatches_from_api()
                 if api_data:
@@ -348,7 +407,7 @@ class DispatchService:
                         bot_logger.debug(f"使用缓存翻译：快讯 #{dispatch_id}")
                     else:
                         # 如果没有缓存翻译，实时翻译
-                        bot_logger.warning(f"快讯 #{dispatch_id} 没有缓存翻译，进行实时翻译")
+                        bot_logger.info(f"快讯 #{dispatch_id} 没有缓存翻译，进行实时翻译")
                         translated_content = await self.translation_service.translate_text(original_message, "zh")
                         if translated_content and translated_content != original_message:
                             translated_message = translated_content
@@ -364,7 +423,7 @@ class DispatchService:
                 message += f"▎时间: {published_time}\n"
                 message += f"▎内容: {translated_message}\n"
                 message += "-------------\n"
-                message += "获取最新情报，为了超级地球！🌍"
+                message += "使用/news [1-5]可以查看其他快讯！🌍"
                 
                 messages.append(message)
             
