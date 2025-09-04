@@ -39,6 +39,7 @@ class HelpPlugin(Plugin):
             "▎/order - 查看当前最高命令\n"
             "▎/news [1-5] - 查看游戏快讯\n"
             "▎/help - 显示此帮助信息\n"
+            "▎/steam - 查看最新更新日志\n"
             "-------------\n"
             "▎联系方式:\n"
             "▎民主官邮箱: xiaoyueyoqwq@vaiiya,org\n"
