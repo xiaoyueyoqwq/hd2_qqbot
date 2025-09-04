@@ -5,6 +5,7 @@ Helldivers 2 Steam 更新日志核心业务模块
 from typing import Dict, Any, Optional, List
 import sys
 import os
+import re
 import aiohttp
 import asyncio
 from datetime import datetime, timezone
@@ -22,6 +23,7 @@ from utils.translation_cache import translation_cache
 from utils.translation_retry_queue import translation_retry_queue
 from core.news import TranslationService, clean_game_text
 from utils.api_retry import APIRetryMixin
+from utils.config import settings
 
 
 class SteamService(APIRetryMixin):
@@ -271,6 +273,17 @@ class SteamService(APIRetryMixin):
                     if cached_content:
                         translated_content = cached_content
                     
+                    # 也从缓存中获取作者和时间信息（如果原始数据缺失的话）
+                    if not author or author == '未知':
+                        cached_author = metadata.get('author', '')
+                        if cached_author:
+                            author = cached_author
+                    
+                    if not published_time or published_time == '未知时间':
+                        cached_published_at = metadata.get('publishedAt', '')
+                        if cached_published_at:
+                            published_time = self._format_time(cached_published_at)
+                    
                     bot_logger.debug(f"使用缓存翻译：Steam更新 #{update_id}")
                 else:
                     # 如果没有缓存翻译，使用原文（避免重复翻译）
@@ -279,11 +292,12 @@ class SteamService(APIRetryMixin):
             
             # 清理游戏格式标签
             translated_title = clean_game_text(translated_title)
-            translated_content = clean_game_text(translated_content)
             
-            # 截取内容长度，避免消息过长
-            if len(translated_content) > 500:
-                translated_content = translated_content[:497] + "..."
+            # 智能处理长内容（在清理之前进行，以保留格式信息）
+            translated_content = self._smart_truncate_content(translated_content)
+            
+            # 最后清理并格式化内容
+            translated_content = self._format_content_structure(translated_content)
             
             # 构建消息
             message = f"\n🎮 Steam 更新日志 | HELLDIVERS 2\n"
@@ -297,15 +311,203 @@ class SteamService(APIRetryMixin):
             
             if url:
                 message += f"🔗 详细信息: {url}\n"
-                message += "-------------\n"
-            
-            message += "使用 /steam 可以查看最新更新日志！🌍"
+                message += "-------------"
             
             return message
             
         except Exception as e:
             bot_logger.error(f"格式化Steam更新数据时发生错误: {e}")
             return "\n❌ 数据格式化失败，请稍后重试。"
+    
+    def _smart_truncate_content(self, content: str, max_length: int = None) -> str:
+        """
+        智能截取内容，优先提取玩家最感兴趣的部分
+        
+        Args:
+            content: 原始内容
+            max_length: 最大长度，None时使用配置值
+            
+        Returns:
+            截取后的内容
+        """
+        if not content:
+            return content
+        
+        # 使用配置的最大长度
+        if max_length is None:
+            max_length = settings.STEAM_MAX_CONTENT_LENGTH
+            
+        # 如果内容较短，直接返回
+        if len(content) <= max_length:
+            return content
+        
+        # 提取关键部分（玩家最感兴趣的内容）
+        extracted_content = self._extract_key_sections(content)
+        
+        # 如果提取的内容仍然过长，进行智能截断
+        if len(extracted_content) <= max_length:
+            return extracted_content
+        else:
+            return self._truncate_at_boundary(extracted_content, max_length)
+    
+    def _extract_key_sections(self, content: str) -> str:
+        """
+        提取Steam更新中玩家最感兴趣的关键部分
+        
+        Args:
+            content: 完整内容
+            
+        Returns:
+            提取的关键内容
+        """
+        # 直接基于原始内容进行分割，保持更多上下文
+        sections = []
+        
+        # 查找平衡性调整部分
+        balancing_start = content.find("⚖️")
+        if balancing_start == -1:
+            balancing_start = content.lower().find("balancing")
+        
+        if balancing_start != -1:
+            # 找到下一个主要部分的开始
+            next_section = content.find("[h2]", balancing_start + 10)
+            if next_section == -1:
+                balancing_content = content[balancing_start:]
+            else:
+                balancing_content = content[balancing_start:next_section]
+            
+            # 清理并限制长度
+            cleaned = clean_game_text(balancing_content)
+            if len(cleaned) > settings.STEAM_BALANCING_LIMIT:
+                cleaned = self._truncate_at_boundary(cleaned, settings.STEAM_BALANCING_LIMIT)
+            
+            sections.append(f"⚖️ 平衡性调整\n{'-' * 15}\n{cleaned}")
+        
+        # 查找修复部分
+        fixes_start = content.find("🔧")
+        if fixes_start == -1:
+            fixes_start = content.lower().find("fixes")
+        
+        if fixes_start != -1:
+            # 找到下一个主要部分的开始
+            next_section = content.find("[h2]", fixes_start + 10)
+            if next_section == -1:
+                fixes_content = content[fixes_start:]
+            else:
+                fixes_content = content[fixes_start:next_section]
+            
+            # 清理并限制长度
+            cleaned = clean_game_text(fixes_content)
+            if len(cleaned) > settings.STEAM_FIXES_LIMIT:
+                cleaned = self._truncate_at_boundary(cleaned, settings.STEAM_FIXES_LIMIT)
+            
+            sections.append(f"🔧 修复内容\n{'-' * 15}\n{cleaned}")
+        
+        # 查找已知问题部分
+        issues_start = content.lower().find("known issues")
+        if issues_start != -1:
+            issues_content = content[issues_start:]
+            # 清理并限制长度
+            cleaned = clean_game_text(issues_content)
+            if len(cleaned) > settings.STEAM_ISSUES_LIMIT:
+                cleaned = self._truncate_at_boundary(cleaned, settings.STEAM_ISSUES_LIMIT)
+            
+            sections.append(f"🐛 已知问题\n{'-' * 15}\n{cleaned}")
+        
+        if not sections:
+            # 如果没有找到关键部分，返回开头部分
+            cleaned_full = clean_game_text(content)
+            return self._truncate_at_boundary(cleaned_full, 1500) + "\n\n📄 完整内容请查看Steam页面"
+        
+        # 组合所有部分
+        result = "\n\n".join(sections)
+        
+        # 如果结果太长，只保留前几个部分
+        if len(result) > 1800:
+            result = "\n\n".join(sections[:settings.STEAM_MAX_SECTIONS-1])
+        
+        result += "\n\n📄 完整内容请查看Steam页面"
+        
+        return result
+    
+    def _format_content_structure(self, content: str) -> str:
+        """
+        格式化内容结构，改进章节标题和分隔符
+        
+        Args:
+            content: 原始内容
+            
+        Returns:
+            格式化后的内容
+        """
+        if not content:
+            return content
+        
+        # 先进行基本清理
+        formatted = clean_game_text(content)
+        
+        # 改进章节标题格式
+        # 将 "⚖️ **平衡**" 格式化为 "## ⚖️ 平衡"
+        formatted = re.sub(r'⚖️\s*\*\*([^*]+)\*\*', r'## ⚖️ \1', formatted)
+        # 将 "🔧 **修复**" 格式化为 "## 🔧 修复"
+        formatted = re.sub(r'🔧\s*\*\*([^*]+)\*\*', r'## 🔧 \1', formatted)
+        
+        # 处理独立的修复标题
+        formatted = re.sub(r'^\s*🔧\s*修复\s*$', '## 🔧 修复', formatted, flags=re.MULTILINE)
+        
+        # 将武器名称等双星号标题转换为子标题，但不包括已经转换的主标题
+        formatted = re.sub(r'(?<!## )\*\*([^*]+)\*\*', r'**\1**', formatted)
+        
+        # 确保列表项格式正确
+        formatted = re.sub(r'^\*\s*', '* ', formatted, flags=re.MULTILINE)
+        
+        # 修复错误的格式：* *文本** -> **文本**
+        formatted = re.sub(r'\*\s+\*([^*]+)\*\*', r'**\1**', formatted)
+        
+        # 清理多余的空行
+        formatted = re.sub(r'\n\s*\n\s*\n+', '\n\n', formatted)
+        
+        return formatted.strip()
+    
+    def _truncate_at_boundary(self, content: str, max_length: int) -> str:
+        """
+        在合适的边界处截断内容
+        
+        Args:
+            content: 要截断的内容
+            max_length: 最大长度
+            
+        Returns:
+            截断后的内容
+        """
+        if len(content) <= max_length:
+            return content
+            
+        truncate_pos = max_length - 20  # 为后缀预留空间
+        
+        # 优先在段落边界截断
+        last_paragraph = content.rfind('\n\n', 0, truncate_pos)
+        if last_paragraph > max_length * 0.6:
+            return content[:last_paragraph] + "\n\n..."
+        
+        # 其次在句子边界截断
+        sentence_endings = ['. ', '! ', '? ', '。', '！', '？']
+        last_sentence = -1
+        for ending in sentence_endings:
+            pos = content.rfind(ending, 0, truncate_pos)
+            if pos > last_sentence:
+                last_sentence = pos + len(ending)
+        
+        if last_sentence > max_length * 0.7:
+            return content[:last_sentence] + "..."
+        
+        # 最后在单词边界截断
+        last_space = content.rfind(' ', 0, truncate_pos)
+        if last_space > max_length * 0.8:
+            return content[:last_space] + "..."
+        
+        # 如果找不到合适的边界，直接截断
+        return content[:truncate_pos] + "..."
     
     def _format_time(self, time_str: str) -> str:
         """

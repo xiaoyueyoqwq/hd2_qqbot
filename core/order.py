@@ -218,7 +218,8 @@ class OrderService:
                 translated_brief = brief
                 translated_task = task_desc
                 
-                if order_id and order_id != '0':
+                # 尝试获取缓存翻译（包括ID为0的情况）
+                if order_id:
                     cached_translation = await translation_cache.get_translated_content('orders', order_id)
                     
                     if cached_translation and cached_translation.get('metadata'):

@@ -2,10 +2,10 @@
 # QQ 平台机器人配置
 # -----------------------------------------------------------------
 bot:
-  appid: "102806503"
-  token: "3889831601"
-  secret: "JE94zupkgcYUQMIFC9630xvtrpnljihg"
-  sandbox: true
+  appid: "YOUR_BOT_APPID"          # 替换为你的机器人APPID
+  token: "YOUR_BOT_TOKEN"          # 替换为你的机器人Token
+  secret: "YOUR_BOT_SECRET"        # 替换为你的机器人Secret
+  sandbox: true                    # 是否使用沙箱环境
 
 # -----------------------------------------------------------------
 # 调试与开发配置
@@ -43,3 +43,62 @@ cache:
   immediate_update: true
   # API请求间隔（秒），避免触发限速
   request_delay: 5
+  # 缓存更新失败时的重试延迟（秒）
+  retry_delay: 30
+
+# -----------------------------------------------------------------
+# Helldivers 2 API 配置
+# -----------------------------------------------------------------
+hd2_api:
+  # API 基础URL
+  base_url: "https://api.helldivers2.dev"
+  # 请求超时时间（秒）
+  timeout: 30
+  # 重试配置
+  retry:
+    max_retries: 2
+    base_delay: 5.0
+    max_delay: 30.0
+  # 请求头配置
+  headers:
+    user_agent: "hd2_qqbot/1.0"
+    client: "hd2_qqbot"
+    contact: "YOUR_EMAIL@DOMAIN.COM"  # 替换为你的联系邮箱
+
+# -----------------------------------------------------------------
+# 翻译服务配置
+# -----------------------------------------------------------------
+translation:
+  # AI翻译API配置
+  api_url: "https://ai-translator.cc/api/translate"
+  # 请求超时时间（秒）
+  timeout: 30
+  # 重试配置
+  retry:
+    max_retries: 3
+    base_delay: 2.0
+    max_delay: 30.0
+
+# -----------------------------------------------------------------
+# Steam 内容处理配置
+# -----------------------------------------------------------------
+steam:
+  # 内容长度限制
+  max_content_length: 2000
+  # 各部分最大长度
+  section_limits:
+    balancing: 800
+    fixes: 600
+    known_issues: 300
+  # 最大显示部分数量
+  max_sections: 3
+
+# -----------------------------------------------------------------
+# 智能缓存轮转配置
+# -----------------------------------------------------------------
+rotation:
+  # 各服务的刷新间隔（秒）
+  intervals:
+    dispatches: 300    # 快讯 5分钟
+    orders: 600        # 最高命令 10分钟
+    steam: 900         # Steam更新 15分钟

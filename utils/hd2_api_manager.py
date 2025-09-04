@@ -15,24 +15,27 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 from utils.logger import bot_logger
+from utils.api_retry import APIRetryMixin
+from utils.config import settings
 
-class HD2ApiManager:
+class HD2ApiManager(APIRetryMixin):
     """Helldivers 2 API 管理器"""
     
     def __init__(self):
-        self.base_url = "https://api.helldivers2.dev"
+        super().__init__()
+        self.base_url = settings.HD2_API_BASE_URL
         self.default_headers = {
-            "User-Agent": "hd2_qqbot/1.0",
-            "X-Super-Client": "hd2_qqbot",
-            "X-Super-Contact": "xiaoyueyoqwq@vaiiya.org",
+            "User-Agent": settings.HD2_API_USER_AGENT,
+            "X-Super-Client": settings.HD2_API_CLIENT,
+            "X-Super-Contact": settings.HD2_API_CONTACT,
             "Accept": "application/json",
             "Content-Type": "application/json"
         }
-        self.timeout = aiohttp.ClientTimeout(total=30)
+        self.timeout = aiohttp.ClientTimeout(total=settings.HD2_API_TIMEOUT)
     
     async def get(self, endpoint: str, params: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
         """
-        发送 GET 请求到 Helldivers 2 API
+        发送 GET 请求到 Helldivers 2 API（带重试机制）
         
         Args:
             endpoint: API 端点路径
@@ -43,7 +46,7 @@ class HD2ApiManager:
         """
         url = f"{self.base_url}{endpoint}"
         
-        try:
+        async def _api_call():
             async with aiohttp.ClientSession(
                 headers=self.default_headers,
                 timeout=self.timeout
@@ -55,23 +58,26 @@ class HD2ApiManager:
                         data = await response.json()
                         bot_logger.debug(f"API 请求成功: {url}")
                         return data
-                    elif response.status == 429:
-                        retry_after = response.headers.get('Retry-After', '10')
-                        bot_logger.warning(f"API 请求频率限制: {url}, 建议 {retry_after} 秒后重试")
-                        return None
                     else:
-                        bot_logger.warning(f"API 请求失败: {url}, 状态码: {response.status}")
-                        return None
-                        
-        except aiohttp.ClientError as e:
-            bot_logger.error(f"API 请求异常: {url}, 错误: {e}")
+                        # 返回带状态码的响应对象，让重试机制处理
+                        class APIResponse:
+                            def __init__(self, status):
+                                self.status = status
+                        return APIResponse(response.status)
+        
+        # 使用重试机制调用API，使用配置的重试参数
+        result = await self.retry_api_call(
+            _api_call,
+            max_retries=settings.HD2_API_RETRY_MAX,
+            base_delay=settings.HD2_API_RETRY_BASE_DELAY,
+            max_delay=settings.HD2_API_RETRY_MAX_DELAY
+        )
+        
+        # 如果结果是APIResponse对象，说明请求失败
+        if hasattr(result, 'status'):
             return None
-        except asyncio.TimeoutError:
-            bot_logger.error(f"API 请求超时: {url}")
-            return None
-        except Exception as e:
-            bot_logger.error(f"API 请求未知错误: {url}, 错误: {e}")
-            return None
+            
+        return result
 
 # 全局 API 管理器实例
 hd2_api = HD2ApiManager()

@@ -22,17 +22,17 @@ from utils.logger import bot_logger
 from utils.translation_cache import translation_cache
 from utils.translation_retry_queue import translation_retry_queue
 from utils.api_retry import APIRetryMixin
+from utils.config import settings
 
 
 def clean_game_text(text: str) -> str:
     """
     清理游戏文本中的格式占位符，转换为纯文本格式
     
-    游戏内的 <i=x></i> 占位符说明：
-    - <i=1></i>: 通常用于重要信息高亮（如星球名称、武器名称）
-    - <i=2></i>: 用于次要信息强调
-    - <i=3></i>: 用于标题或警告信息强调
-    这些占位符在游戏内会显示为不同颜色或样式，在机器人中转换为空格分隔
+    支持清理的标签类型：
+    - 游戏内 <i=x></i> 占位符：用于高亮显示
+    - BBCode标签：[p], [h2], [b], [list], [*] 等
+    - HTML标签：<p>, <h2>, <b> 等
     
     Args:
         text: 原始游戏文本
@@ -43,13 +43,54 @@ def clean_game_text(text: str) -> str:
     if not text:
         return text
     
-    # 将开始标签 <i=数字> 替换为空格，保持文本分隔
-    cleaned = re.sub(r'<i=\d+>', ' ', text)
-    # 将结束标签 </i> 替换为空格，保持文本分隔
+    cleaned = text
+    
+    # 清理游戏内的 <i=x></i> 占位符
+    cleaned = re.sub(r'<i=\d+>', ' ', cleaned)
     cleaned = re.sub(r'</i>', ' ', cleaned)
     
-    # 清理多余的空白字符，但保留必要的分隔
-    cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+    # 清理BBCode标签 - 保留内容，移除标签
+    # 段落标签
+    cleaned = re.sub(r'\[/?p\]', '\n', cleaned)
+    # 标题标签
+    cleaned = re.sub(r'\[/?h[1-6]\]', '\n', cleaned)
+    # 粗体标签
+    cleaned = re.sub(r'\[/?b\]', '', cleaned)
+    # 斜体标签
+    cleaned = re.sub(r'\[/?i\]', '', cleaned)
+    # 下划线标签
+    cleaned = re.sub(r'\[/?u\]', '', cleaned)
+    # 列表标签
+    cleaned = re.sub(r'\[/?list\]', '\n', cleaned)
+    # 列表项标签
+    cleaned = re.sub(r'\[\*\]', '\n• ', cleaned)
+    cleaned = re.sub(r'\[/\*\]', '', cleaned)
+    # 颜色标签
+    cleaned = re.sub(r'\[color=[^\]]+\]', '', cleaned)
+    cleaned = re.sub(r'\[/color\]', '', cleaned)
+    # URL标签
+    cleaned = re.sub(r'\[url=[^\]]+\]', '', cleaned)
+    cleaned = re.sub(r'\[/url\]', '', cleaned)
+    # 其他常见BBCode标签
+    cleaned = re.sub(r'\[/?[a-zA-Z][a-zA-Z0-9]*(?:=[^\]]+)?\]', '', cleaned)
+    
+    # 清理HTML标签（如果有）
+    cleaned = re.sub(r'<[^>]+>', '', cleaned)
+    
+    # 清理垃圾链接和样式标签
+    # 移除zendesk链接和相关内容
+    cleaned = re.sub(r'zendesk\.com[^\s\]]*', '', cleaned)
+    cleaned = re.sub(r'style="[^"]*"', '', cleaned)
+    cleaned = re.sub(r'\]已知问题.*?$', '', cleaned, flags=re.MULTILINE)
+    
+    # 清理其他常见的垃圾内容
+    cleaned = re.sub(r'https?://[^\s\]]+', '', cleaned)  # 移除所有HTTP链接
+    cleaned = re.sub(r'--HELLDIVERS-2-[^\]]*', '', cleaned)  # 移除特定格式的标识符
+    
+    # 清理多余的空白字符，但保留段落分隔
+    cleaned = re.sub(r'\n\s*\n\s*\n+', '\n\n', cleaned)  # 多个连续换行合并为两个
+    cleaned = re.sub(r'[ \t]+', ' ', cleaned)  # 多个空格合并为一个
+    cleaned = cleaned.strip()
     
     return cleaned
 
@@ -58,21 +99,21 @@ class TranslationService:
     """AI智能翻译服务"""
     
     def __init__(self):
-        self.api_url = "https://uapis.cn/api/v1/ai/translate"
-        self.timeout = aiohttp.ClientTimeout(total=20)  # 增加超时时间
+        self.api_url = settings.TRANSLATION_API_URL
+        self.timeout = aiohttp.ClientTimeout(total=settings.TRANSLATION_TIMEOUT)
         self.headers = {
             "Content-Type": "application/json",
-            "User-Agent": "hd2_qqbot/1.0"
+            "User-Agent": settings.HD2_API_USER_AGENT
         }
     
-    async def translate_text(self, text: str, to_lang: str = "zh", max_retries: int = 3) -> Optional[str]:
+    async def translate_text(self, text: str, to_lang: str = "zh-CN", max_retries: int = None) -> Optional[str]:
         """
         使用AI智能翻译文本（带重试机制）
         
         Args:
             text: 待翻译的文本
-            to_lang: 目标语言代码，默认为中文(zh)
-            max_retries: 最大重试次数
+            to_lang: 目标语言代码，默认为中文简体(zh-CN)
+            max_retries: 最大重试次数，None时使用配置值
         
         Returns:
             翻译后的文本，失败时返回原文
@@ -84,57 +125,55 @@ class TranslationService:
         if len(text.strip()) < 3:
             return text
         
-        # 构建完整URL（包含查询参数）
-        url = f"{self.api_url}?target_lang={to_lang}"
+        # 使用配置的重试次数
+        if max_retries is None:
+            max_retries = settings.TRANSLATION_RETRY_MAX
         
-        # 构建请求数据 - 使用新的AI翻译接口
+        # 构建请求数据 - 使用新的ai-translator.cc API格式
         payload = {
             "text": text.strip(),
-            "source_lang": "en",  # 指定源语言为英语
-            "style": "casual",  # 使用随意口语化风格，适合游戏内容
-            "context": "entertainment",  # 娱乐上下文，适合游戏
-            "fast_mode": False,  # 不启用快速模式
-            "preserve_format": True  # 保留格式
+            "sourceLanguage": "auto",  # 自动检测源语言
+            "targetLanguage": to_lang  # 目标语言
         }
         
         # 重试逻辑
         for attempt in range(max_retries + 1):
             try:
                 async with aiohttp.ClientSession(timeout=self.timeout) as session:
-                    async with session.post(url, json=payload, headers=self.headers) as response:
-                        response_text = await response.text()
+                    async with session.post(self.api_url, json=payload, headers=self.headers) as response:
                         
                         if response.status == 200:
                             try:
                                 data = await response.json()
                                 
                                 # 检查新API的响应格式
-                                if data.get("code") == 200 and "data" in data:
-                                    translated_text = data["data"].get("translated_text", "").strip()
-                                    confidence = data["data"].get("confidence_score", 0)
+                                if "translatedText" in data:
+                                    translated_text = data["translatedText"].strip()
+                                    confidence = data.get("confidence", 0)
+                                    translator_used = data.get("translatorUsed", "unknown")
                                     
                                     if translated_text and translated_text != text.strip():
                                         if attempt > 0:
-                                            bot_logger.info(f"AI翻译成功 (第{attempt+1}次尝试, 置信度: {confidence:.2f}): '{text[:30]}...' -> '{translated_text[:30]}...'")
+                                            bot_logger.info(f"AI翻译成功 (第{attempt+1}次尝试, {translator_used}, 置信度: {confidence:.2f}): '{text[:30]}...' -> '{translated_text[:30]}...'")
                                         else:
-                                            bot_logger.info(f"AI翻译成功 (置信度: {confidence:.2f}): '{text[:30]}...' -> '{translated_text[:30]}...'")
+                                            bot_logger.info(f"AI翻译成功 ({translator_used}, 置信度: {confidence:.2f}): '{text[:30]}...' -> '{translated_text[:30]}...'")
                                         return translated_text
                                     else:
                                         bot_logger.warning(f"AI翻译结果为空或与原文相同: '{text[:30]}...'")
                                         return text
                                 else:
-                                    error_msg = data.get('message', 'Unknown error')
+                                    error_msg = data.get('error', 'Unknown error')
                                     if attempt < max_retries:
-                                        bot_logger.warning(f"AI翻译API返回错误 (第{attempt+1}次尝试): {error_msg}，5秒后重试...")
-                                        await asyncio.sleep(5)
+                                        bot_logger.warning(f"AI翻译API返回错误 (第{attempt+1}次尝试): {error_msg}，{settings.TRANSLATION_RETRY_BASE_DELAY}秒后重试...")
+                                        await asyncio.sleep(settings.TRANSLATION_RETRY_BASE_DELAY)
                                         continue
                                     else:
                                         bot_logger.error(f"AI翻译API最终失败: {error_msg}")
                                         return text
                             except Exception as json_error:
                                 if attempt < max_retries:
-                                    bot_logger.warning(f"解析AI翻译API响应JSON失败 (第{attempt+1}次尝试): {json_error}，5秒后重试...")
-                                    await asyncio.sleep(5)
+                                    bot_logger.warning(f"解析AI翻译API响应JSON失败 (第{attempt+1}次尝试): {json_error}，{settings.TRANSLATION_RETRY_BASE_DELAY}秒后重试...")
+                                    await asyncio.sleep(settings.TRANSLATION_RETRY_BASE_DELAY)
                                     continue
                                 else:
                                     bot_logger.error(f"解析AI翻译API响应JSON最终失败: {json_error}")
@@ -142,37 +181,39 @@ class TranslationService:
                         else:
                             # 非200状态码，进行重试
                             if attempt < max_retries:
-                                bot_logger.warning(f"AI翻译API请求失败 (第{attempt+1}次尝试): 状态码 {response.status}，5秒后重试...")
+                                response_text = await response.text()
+                                bot_logger.warning(f"AI翻译API请求失败 (第{attempt+1}次尝试): 状态码 {response.status}，{settings.TRANSLATION_RETRY_BASE_DELAY}秒后重试...")
                                 if response_text:
-                                    bot_logger.debug(f"错误响应: {response_text}")
-                                await asyncio.sleep(5)
+                                    bot_logger.debug(f"错误响应: {response_text[:200]}...")
+                                await asyncio.sleep(settings.TRANSLATION_RETRY_BASE_DELAY)
                                 continue
                             else:
+                                response_text = await response.text()
                                 bot_logger.error(f"AI翻译API最终失败: 状态码 {response.status}")
                                 if response_text:
-                                    bot_logger.error(f"错误响应: {response_text}")
+                                    bot_logger.error(f"错误响应: {response_text[:200]}...")
                                 return text
                                 
             except asyncio.TimeoutError:
                 if attempt < max_retries:
-                    bot_logger.warning(f"AI翻译API请求超时 (第{attempt+1}次尝试)，5秒后重试...")
-                    await asyncio.sleep(5)
+                    bot_logger.warning(f"AI翻译API请求超时 (第{attempt+1}次尝试)，{settings.TRANSLATION_RETRY_BASE_DELAY}秒后重试...")
+                    await asyncio.sleep(settings.TRANSLATION_RETRY_BASE_DELAY)
                     continue
                 else:
                     bot_logger.error("AI翻译API请求最终超时")
                     return text
             except aiohttp.ClientError as e:
                 if attempt < max_retries:
-                    bot_logger.warning(f"AI翻译API网络错误 (第{attempt+1}次尝试): {e}，5秒后重试...")
-                    await asyncio.sleep(5)
+                    bot_logger.warning(f"AI翻译API网络错误 (第{attempt+1}次尝试): {e}，{settings.TRANSLATION_RETRY_BASE_DELAY}秒后重试...")
+                    await asyncio.sleep(settings.TRANSLATION_RETRY_BASE_DELAY)
                     continue
                 else:
                     bot_logger.error(f"AI翻译API网络最终失败: {e}")
                     return text
             except Exception as e:
                 if attempt < max_retries:
-                    bot_logger.warning(f"AI翻译请求异常 (第{attempt+1}次尝试): {e}，5秒后重试...")
-                    await asyncio.sleep(5)
+                    bot_logger.warning(f"AI翻译请求异常 (第{attempt+1}次尝试): {e}，{settings.TRANSLATION_RETRY_BASE_DELAY}秒后重试...")
+                    await asyncio.sleep(settings.TRANSLATION_RETRY_BASE_DELAY)
                     continue
                 else:
                     bot_logger.error(f"AI翻译请求最终异常: {e}")

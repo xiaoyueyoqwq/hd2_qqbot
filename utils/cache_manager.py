@@ -11,6 +11,7 @@ from typing import Dict, Any, Optional, Callable, List
 from dataclasses import dataclass
 from utils.redis_manager import redis_manager
 from utils.logger import bot_logger
+from utils.config import settings
 
 
 @dataclass
@@ -57,7 +58,7 @@ class APICacheManager:
             for i, (name, config) in enumerate(self._cache_configs.items()):
                 if config.enabled:
                     if i > 0:  # 第一个请求不需要延迟
-                        await asyncio.sleep(Settings.CACHE_REQUEST_DELAY)
+                        await asyncio.sleep(settings.CACHE_REQUEST_DELAY)
                     await self._update_cache(name, config)
         
         # 为每个缓存配置启动更新任务
@@ -102,15 +103,16 @@ class APICacheManager:
                     # 更新成功，等待正常间隔
                     await asyncio.sleep(config.update_interval)
                 else:
-                    # 更新失败（可能是API限速），等待较长时间再重试
-                    bot_logger.info(f"缓存 {name} 更新失败，10秒后重试...")
-                    await asyncio.sleep(10)
+                    # 更新失败，等待较长时间再重试
+                    # 由于底层API管理器现在有重试机制，这里延长等待时间避免过于频繁的重试
+                    bot_logger.info(f"缓存 {name} 更新失败，{settings.CACHE_RETRY_DELAY}秒后重试...")
+                    await asyncio.sleep(settings.CACHE_RETRY_DELAY)
                 
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 bot_logger.error(f"缓存 {name} 更新循环异常: {e}")
-                await asyncio.sleep(10)  # 发生错误时等待10秒再重试
+                await asyncio.sleep(settings.CACHE_RETRY_DELAY)  # 发生错误时使用配置的重试延迟
     
     async def _update_cache(self, name: str, config: CacheConfig) -> bool:
         """

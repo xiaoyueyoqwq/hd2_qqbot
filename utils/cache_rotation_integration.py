@@ -15,6 +15,7 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 from utils.rotation_manager import RotationManager, TimeBasedStrategy
+from utils.config import settings
 from utils.translation_cache import translation_cache
 from utils.text_matcher import text_matcher
 from utils.logger import bot_logger
@@ -49,8 +50,6 @@ class CacheRotationIntegration:
             # 注册Steam更新缓存刷新任务
             await self._register_steam_rotation()
             
-            # 注册缓存清理任务
-            await self._register_cache_cleanup_rotation()
             
             # 初始化翻译重试队列系统
             await translation_retry_queue.initialize()
@@ -80,9 +79,9 @@ class CacheRotationIntegration:
                 except Exception as e:
                     bot_logger.error(f"❌ 快讯缓存刷新失败: {e}")
             
-            # 使用基于时间的策略，每5分钟执行一次
+            # 使用基于时间的策略，使用配置的间隔
             from utils.rotation_manager import TimeBasedStrategy
-            strategy = TimeBasedStrategy(interval=300)  # 5分钟间隔
+            strategy = TimeBasedStrategy(interval=settings.ROTATION_DISPATCHES_INTERVAL)
             
             await self.rotation_manager.register_rotation(
                 name="dispatch_cache_refresh",
@@ -117,7 +116,7 @@ class CacheRotationIntegration:
                     bot_logger.error(f"❌ 最高命令缓存刷新失败: {e}")
             
             # 使用基于时间的策略，每10分钟执行一次
-            strategy = TimeBasedStrategy(interval=600)  # 10分钟间隔
+            strategy = TimeBasedStrategy(interval=settings.ROTATION_ORDERS_INTERVAL)
             
             await self.rotation_manager.register_rotation(
                 name="order_cache_refresh",
@@ -152,7 +151,7 @@ class CacheRotationIntegration:
                     bot_logger.error(f"❌ Steam更新缓存刷新失败: {e}")
             
             # 使用基于时间的策略，每15分钟执行一次（Steam更新不如快讯频繁）
-            strategy = TimeBasedStrategy(interval=900)  # 15分钟间隔
+            strategy = TimeBasedStrategy(interval=settings.ROTATION_STEAM_INTERVAL)
             
             await self.rotation_manager.register_rotation(
                 name="steam_cache_refresh",
@@ -168,42 +167,6 @@ class CacheRotationIntegration:
         except Exception as e:
             bot_logger.error(f"❌ 注册Steam缓存轮转失败: {e}")
     
-    async def _register_cache_cleanup_rotation(self) -> None:
-        """注册缓存清理轮转任务"""
-        try:
-            async def cache_cleanup_handler():
-                """缓存清理处理器"""
-                try:
-                    bot_logger.debug("🧹 执行缓存清理任务...")
-                    
-                    # 获取缓存统计
-                    stats = await translation_cache.get_cache_stats()
-                    
-                    if stats:
-                        bot_logger.debug("📊 缓存统计:")
-                        for key, value in stats.items():
-                            if value is not None:
-                                bot_logger.debug(f"   {key}: {value}")
-                    
-                    bot_logger.debug("✅ 缓存清理任务完成")
-                    
-                except Exception as e:
-                    bot_logger.error(f"❌ 缓存清理失败: {e}")
-            
-            # 使用基于时间的策略，每小时执行一次
-            strategy = TimeBasedStrategy(interval=3600)  # 1小时间隔
-            
-            await self.rotation_manager.register_rotation(
-                name="cache_cleanup",
-                handler=cache_cleanup_handler,
-                strategy=strategy,
-                start_immediately=True
-            )
-            
-            bot_logger.info("✅ 缓存清理轮转任务已注册")
-            
-        except Exception as e:
-            bot_logger.error(f"❌ 注册缓存清理轮转失败: {e}")
     
     async def manual_refresh_all_caches(self) -> None:
         """手动刷新所有缓存"""
@@ -219,8 +182,6 @@ class CacheRotationIntegration:
             # 手动执行Steam更新缓存刷新
             await self.rotation_manager.manual_rotate("steam_cache_refresh")
             
-            # 手动执行缓存清理
-            await self.rotation_manager.manual_rotate("cache_cleanup")
             
             bot_logger.info("✅ 所有缓存手动刷新完成")
             
@@ -235,8 +196,7 @@ class CacheRotationIntegration:
         cache_rotations = [
             "dispatch_cache_refresh",
             "order_cache_refresh",
-            "steam_cache_refresh",
-            "cache_cleanup"
+            "steam_cache_refresh"
         ]
         
         status = {}
@@ -256,8 +216,7 @@ class CacheRotationIntegration:
             cache_rotations = [
                 "dispatch_cache_refresh",
                 "order_cache_refresh",
-                "steam_cache_refresh",
-                "cache_cleanup"
+                "steam_cache_refresh"
             ]
             
             for rotation_name in cache_rotations:
