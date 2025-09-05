@@ -220,37 +220,64 @@ class SteamService(APIRetryMixin):
     
     async def get_latest_steam_update(self) -> Optional[Dict[str, Any]]:
         """
-        获取最新的Steam更新数据（优先从缓存）
-        缓存刷新由轮转系统自动处理
-        
-        Returns:
-            最新的Steam更新或None(如果获取失败)
+        获取最新的Steam更新数据，并确保其有效性。
+        - 如果缓存为空或无效，将从API强制刷新。
+        - 确保返回的数据是可用的（有内容且已翻译）。
         """
         try:
-            # 从缓存获取Steam更新列表
-            cached_updates = await translation_cache.get_content_list('steam')
-            
-            if not cached_updates:
-                bot_logger.info("缓存中没有Steam更新数据，尝试直接从API获取")
-                # 如果缓存为空，直接从API获取并缓存
+            # 定义一个可重用的内部函数来处理从API获取、翻译和缓存的完整流程
+            async def _fetch_and_process_api_data():
+                bot_logger.info("正在尝试直接从API获取最新的Steam更新...")
                 api_data = await self.fetch_steam_updates_from_api()
-                if api_data:
-                    # 只缓存最新的一条数据
-                    latest_update = api_data[:1]
-                    if not await self._translate_and_cache_updates(latest_update):
-                        bot_logger.error("获取并翻译最新的Steam更新失败。")
-                        return None
-                        
-                    await translation_cache.store_content_list('steam', latest_update)
-                    cached_updates = latest_update
-                else:
+                if not api_data:
+                    bot_logger.error("从Steam API获取数据失败。")
                     return None
+                
+                # 只处理和缓存最新的一条更新
+                latest_update = api_data[:1]
+                if not await self._translate_and_cache_updates(latest_update):
+                    bot_logger.error("获取到新的Steam数据，但翻译或缓存失败。")
+                    return None
+                
+                await translation_cache.store_content_list('steam', latest_update)
+                return latest_update[0] if latest_update else None
+
+            # 1. 尝试从缓存获取更新列表
+            cached_updates_list = await translation_cache.get_content_list('steam')
             
-            # 返回最新的一条更新
-            return cached_updates[0] if cached_updates else None
+            if not cached_updates_list:
+                bot_logger.info("Steam更新缓存为空，从API获取。")
+                return await _fetch_and_process_api_data()
+
+            # 2. 如果缓存存在，验证最新一条的有效性
+            latest_update_summary = cached_updates_list[0]
+            update_id = str(latest_update_summary.get('id', ''))
             
+            if not update_id:
+                bot_logger.warning("缓存的Steam更新没有ID，强制从API刷新。")
+                return await _fetch_and_process_api_data()
+
+            cached_item_details = await translation_cache.get_translated_content('steam', update_id)
+
+            # 3. 定义有效缓存的标准
+            is_valid = False
+            if cached_item_details and cached_item_details.get('metadata'):
+                metadata = cached_item_details['metadata']
+                has_content = metadata.get('original_title') or metadata.get('original_content')
+                # 只要有内容就被认为是有效的，翻译步骤在格式化时处理
+                if has_content:
+                    is_valid = True
+
+            # 4. 如果缓存无效，则强制刷新；否则返回缓存
+            if not is_valid:
+                bot_logger.warning(f"最新的缓存Steam更新 #{update_id} 无效（无内容），强制从API刷新。")
+                return await _fetch_and_process_api_data()
+            else:
+                bot_logger.debug(f"发现有效的缓存Steam更新 #{update_id}。")
+                return latest_update_summary
+
         except Exception as e:
-            bot_logger.error(f"获取Steam更新数据时发生错误: {e}")
+            bot_logger.error(f"获取Steam更新数据时发生严重错误: {e}")
             return None
     
     async def format_steam_update_message(self, update: Dict[str, Any]) -> str:
@@ -268,61 +295,41 @@ class SteamService(APIRetryMixin):
                 return "\n🎮 当前没有Steam更新日志"
             
             # 获取基本信息
-            update_id = update.get('id', '')
+            update_id = str(update.get('id', ''))
             
-            # 检查翻译并按需刷新
-            cached_translation = await translation_cache.get_translated_content('steam', str(update_id))
-            is_translated = (
-                cached_translation and cached_translation.get('metadata') and
-                (cached_translation['metadata'].get('translated_title') or cached_translation['metadata'].get('translated_content'))
-            )
+            # 在此阶段，我们信任 get_latest_steam_update 已经确保了缓存的有效性
+            # 我们只需要获取完整的翻译详情用于格式化
+            cached_translation = await translation_cache.get_translated_content('steam', update_id)
 
-            if not is_translated:
-                bot_logger.info(f"Steam更新 #{update_id} 没有有效翻译，尝试强制刷新...")
-                if await self._translate_and_cache_updates([update]):
-                    bot_logger.info(f"Steam更新 #{update_id} 强制刷新翻译成功，重新获取缓存。")
-                    cached_translation = await translation_cache.get_translated_content('steam', str(update_id))
-                else:
-                    bot_logger.warning(f"Steam更新 #{update_id} 强制刷新翻译失败，无法提供内容。")
-                    return "\n❌ 抱歉，无法获取或翻译最新的Steam更新日志。"
+            # 如果即时翻译仍然失败或数据确实为空，则提前退出
+            if not cached_translation:
+                 bot_logger.warning(f"即使在刷新后，依然无法为 Steam 更新 #{update_id} 找到有效的缓存细节。")
+                 return "\n❌ 抱歉，无法获取或翻译最新的Steam更新日志。"
 
+            # 设置默认值
             title = update.get('title', '无标题')
             content = update.get('content', '无内容')
             author = update.get('author', '未知')
             url = update.get('url', '')
             published_time = self._format_time(update.get('publishedAt', ''))
             
-            # 从缓存获取翻译内容
+            # 优先从完整的缓存细节中获取翻译和元数据
             translated_title = title
             translated_content = content
             
-            if cached_translation and cached_translation.get('metadata'):
+            if cached_translation.get('metadata'):
                 metadata = cached_translation['metadata']
-                cached_title = metadata.get('translated_title', '')
-                cached_content = metadata.get('translated_content', '')
+                # 如果有翻译则使用翻译，否则使用原文
+                translated_title = metadata.get('translated_title') or metadata.get('original_title') or title
+                translated_content = metadata.get('translated_content') or metadata.get('original_content') or content
                 
-                if cached_title:
-                    translated_title = cached_title
-                if cached_content:
-                    translated_content = cached_content
+                author = metadata.get('author') or author
+                published_time = self._format_time(metadata.get('publishedAt')) or published_time
                 
-                # 也从缓存中获取作者和时间信息（如果原始数据缺失的话）
-                if not author or author == '未知':
-                    cached_author = metadata.get('author', '')
-                    if cached_author:
-                        author = cached_author
-                
-                if not published_time or published_time == '未知时间':
-                    cached_published_at = metadata.get('publishedAt', '')
-                    if cached_published_at:
-                        published_time = self._format_time(cached_published_at)
-                
-                bot_logger.debug(f"使用缓存翻译：Steam更新 #{update_id}")
+                bot_logger.debug(f"使用缓存翻译格式化 Steam 更新 #{update_id}")
             else:
-                # 如果没有缓存翻译，使用原文（避免重复翻译）
-                # 翻译应该在缓存阶段完成，这里只是显示
-                bot_logger.warning(f"Steam更新 #{update_id} 没有缓存翻译，使用原文显示")
-            
+                bot_logger.warning(f"Steam 更新 #{update_id} 的缓存细节中缺少元数据，使用概览信息。")
+
             # 清理游戏格式标签
             translated_title = clean_game_text(translated_title)
             
