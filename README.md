@@ -195,7 +195,7 @@ class MyPlugin(Plugin):
 ## 📞 联系方式
 
 - **民主官邮箱**: xiaoyueyoqwq@vaiiya.org
-- **项目地址**: https://github.com/your-username/hd2_qqbot
+- **项目地址**: https://github.com/xiaoyueyoqwq/hd2_qqbot
 
 ## 📄 许可证
 
