@@ -266,6 +266,22 @@ class SteamService(APIRetryMixin):
             
             # 获取基本信息
             update_id = update.get('id', '')
+            
+            # 检查翻译并按需刷新
+            cached_translation = await translation_cache.get_translated_content('steam', str(update_id))
+            is_translated = (
+                cached_translation and cached_translation.get('metadata') and
+                (cached_translation['metadata'].get('translated_title') or cached_translation['metadata'].get('translated_content'))
+            )
+
+            if not is_translated:
+                bot_logger.info(f"Steam更新 #{update_id} 没有有效翻译，尝试强制刷新...")
+                if await self._translate_and_cache_updates([update]):
+                    bot_logger.info(f"Steam更新 #{update_id} 强制刷新翻译成功，重新获取缓存。")
+                    cached_translation = await translation_cache.get_translated_content('steam', str(update_id))
+                else:
+                    bot_logger.warning(f"Steam更新 #{update_id} 强制刷新翻译失败，将使用原文。")
+
             title = update.get('title', '无标题')
             content = update.get('content', '无内容')
             author = update.get('author', '未知')
@@ -276,35 +292,32 @@ class SteamService(APIRetryMixin):
             translated_title = title
             translated_content = content
             
-            if update_id:
-                cached_translation = await translation_cache.get_translated_content('steam', str(update_id))
+            if cached_translation and cached_translation.get('metadata'):
+                metadata = cached_translation['metadata']
+                cached_title = metadata.get('translated_title', '')
+                cached_content = metadata.get('translated_content', '')
                 
-                if cached_translation and cached_translation.get('metadata'):
-                    metadata = cached_translation['metadata']
-                    cached_title = metadata.get('translated_title', '')
-                    cached_content = metadata.get('translated_content', '')
-                    
-                    if cached_title:
-                        translated_title = cached_title
-                    if cached_content:
-                        translated_content = cached_content
-                    
-                    # 也从缓存中获取作者和时间信息（如果原始数据缺失的话）
-                    if not author or author == '未知':
-                        cached_author = metadata.get('author', '')
-                        if cached_author:
-                            author = cached_author
-                    
-                    if not published_time or published_time == '未知时间':
-                        cached_published_at = metadata.get('publishedAt', '')
-                        if cached_published_at:
-                            published_time = self._format_time(cached_published_at)
-                    
-                    bot_logger.debug(f"使用缓存翻译：Steam更新 #{update_id}")
-                else:
-                    # 如果没有缓存翻译，使用原文（避免重复翻译）
-                    # 翻译应该在缓存阶段完成，这里只是显示
-                    bot_logger.warning(f"Steam更新 #{update_id} 没有缓存翻译，使用原文显示")
+                if cached_title:
+                    translated_title = cached_title
+                if cached_content:
+                    translated_content = cached_content
+                
+                # 也从缓存中获取作者和时间信息（如果原始数据缺失的话）
+                if not author or author == '未知':
+                    cached_author = metadata.get('author', '')
+                    if cached_author:
+                        author = cached_author
+                
+                if not published_time or published_time == '未知时间':
+                    cached_published_at = metadata.get('publishedAt', '')
+                    if cached_published_at:
+                        published_time = self._format_time(cached_published_at)
+                
+                bot_logger.debug(f"使用缓存翻译：Steam更新 #{update_id}")
+            else:
+                # 如果没有缓存翻译，使用原文（避免重复翻译）
+                # 翻译应该在缓存阶段完成，这里只是显示
+                bot_logger.warning(f"Steam更新 #{update_id} 没有缓存翻译，使用原文显示")
             
             # 清理游戏格式标签
             translated_title = clean_game_text(translated_title)

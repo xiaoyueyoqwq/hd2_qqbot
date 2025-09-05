@@ -123,7 +123,8 @@ async def _async_main() -> None:
         get_provider_manager().discover_providers()
         await _check_ip()
         await redis_manager.initialize()
-        await browser_manager.initialize()
+        if settings.BROWSER_ENABLED:
+            await browser_manager.initialize()
         await image_manager.start()
         
         # 初始化缓存系统

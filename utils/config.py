@@ -112,6 +112,9 @@ class Settings:
     STEAM_ISSUES_LIMIT = _config.get("steam", {}).get("section_limits", {}).get("known_issues", 300)
     STEAM_MAX_SECTIONS = _config.get("steam", {}).get("max_sections", 3)
     
+    # 浏览器服务配置
+    BROWSER_ENABLED = _config.get("browser", {}).get("enabled", False)
+    
     # 智能缓存轮转配置
     ROTATION_DISPATCHES_INTERVAL = _config.get("rotation", {}).get("intervals", {}).get("dispatches", 300)
     ROTATION_ORDERS_INTERVAL = _config.get("rotation", {}).get("intervals", {}).get("orders", 600)

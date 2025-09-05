@@ -65,7 +65,9 @@ class NewsPlugin(Plugin):
                 target_dispatch = [dispatches[target_index - 1]]
                 
                 # 格式化并发送快讯数据
-                formatted_messages = await dispatch_service.format_dispatch_messages(target_dispatch)
+                formatted_messages = await dispatch_service.format_dispatch_messages(
+                    target_dispatch, start_index=target_index
+                )
                 
                 # 发送格式化后的消息
                 await handler.send_text(formatted_messages[0])
