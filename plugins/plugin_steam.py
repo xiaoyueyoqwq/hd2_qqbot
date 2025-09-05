@@ -36,9 +36,6 @@ class SteamPlugin(Plugin):
         bot_logger.info(f"用户 {handler.user_id} 请求Steam更新日志 (steam命令)")
         
         try:
-            # 发送"正在查询"的提示消息
-            await handler.send_text("\n🎮 正在获取最新Steam更新日志，请稍候...")
-            
             # 获取最新的Steam更新数据
             latest_update = await steam_service.get_latest_steam_update()
             

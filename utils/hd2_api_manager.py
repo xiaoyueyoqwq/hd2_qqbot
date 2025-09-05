@@ -68,9 +68,9 @@ class HD2ApiManager(APIRetryMixin):
         # 使用重试机制调用API，使用配置的重试参数
         result = await self.retry_api_call(
             _api_call,
-            max_retries=settings.HD2_API_RETRY_MAX,
             base_delay=settings.HD2_API_RETRY_BASE_DELAY,
-            max_delay=settings.HD2_API_RETRY_MAX_DELAY
+            max_delay=settings.HD2_API_RETRY_MAX_DELAY,
+            increment=settings.HD2_API_RETRY_INCREMENT
         )
         
         # 如果结果是APIResponse对象，说明请求失败

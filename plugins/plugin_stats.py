@@ -32,9 +32,6 @@ class StatsPlugin(Plugin):
         bot_logger.info(f"用户 {handler.user_id} 请求战争统计数据")
         
         try:
-            # 发送"正在查询"的提示消息
-            await handler.send_text("\n🔍 正在查询银河战争统计数据，请稍候...")
-            
             # 获取统计数据
             stats_data = await stats_service.get_war_summary()
             

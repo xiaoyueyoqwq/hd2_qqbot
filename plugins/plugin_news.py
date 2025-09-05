@@ -23,14 +23,14 @@ class NewsPlugin(Plugin):
     
     def __init__(self):
         super().__init__()
-        self.description = "查看 Helldivers 2 游戏内快讯 - /news [1-5]"
+        self.description = "查看 Helldivers 2 游戏内快讯 - /news [编号1-5]"
         
 
-    @on_command("news", "查看游戏快讯 - 用法: /news [1-5]")
+    @on_command("news", "查看指定编号的游戏快讯 - 用法: /news [编号1-5]")
     async def handle_news(self, handler: MessageHandler, content: str):
         """
-        处理 /news 命令 - 优化的快讯查看
-        支持参数 1-5 查看对应数量的快讯
+        处理 /news 命令 - 获取指定编号的快讯
+        支持参数 1-5 查看对应的快讯
         无参数时默认显示第一条最新快讯
         
         Args:
@@ -40,19 +40,16 @@ class NewsPlugin(Plugin):
         bot_logger.info(f"用户 {handler.user_id} 请求快讯数据 (news命令)")
         
         try:
-            # 发送"正在查询"的提示消息
-            await handler.send_text("\n📰 正在获取最新快讯，请稍候...")
-            
             # 解析命令参数
             parts = content.strip().split()
-            limit = 1  # 默认显示1条最新快讯
+            target_index = 1  # 默认显示第1条最新快讯
             
             if len(parts) > 1:
                 try:
-                    user_limit = int(parts[1])
-                    # 限制查询数量在1-5范围内
-                    if 1 <= user_limit <= 5:
-                        limit = user_limit
+                    user_index = int(parts[1])
+                    # 限制查询编号在1-5范围内
+                    if 1 <= user_index <= 5:
+                        target_index = user_index
                     else:
                         await handler.send_text("\n⚠️ 参数范围错误，请输入1-5之间的数字。\n用法: /news [1-5]")
                         return
@@ -60,37 +57,31 @@ class NewsPlugin(Plugin):
                     await handler.send_text("\n⚠️ 参数格式错误，请输入数字。\n用法: /news [1-5]")
                     return
             
-            # 获取快讯数据
-            dispatches = await dispatch_service.get_dispatches(limit=limit)
+            # 获取最新的5条快讯数据
+            dispatches = await dispatch_service.get_dispatches(limit=5)
             
-            if dispatches:
+            if dispatches and len(dispatches) >= target_index:
+                # 提取指定编号的快讯
+                target_dispatch = [dispatches[target_index - 1]]
+                
                 # 格式化并发送快讯数据
-                formatted_messages = await dispatch_service.format_dispatch_messages(dispatches)
+                formatted_messages = await dispatch_service.format_dispatch_messages(target_dispatch)
                 
-                # 发送所有格式化后的消息
-                for formatted_message in formatted_messages:
-                    await handler.send_text(formatted_message)
-                    # 稍微延迟避免消息发送过快
-                    if len(formatted_messages) > 1:
-                        await asyncio.sleep(0.5)
+                # 发送格式化后的消息
+                await handler.send_text(formatted_messages[0])
                 
-                # 根据数量显示不同的结果信息
-                if limit == 1:
-                    bot_logger.info(f"成功为用户 {handler.user_id} 提供最新快讯")
-                else:
-                    bot_logger.info(f"成功为用户 {handler.user_id} 提供 {len(dispatches)} 条快讯")
+                bot_logger.info(f"成功为用户 {handler.user_id} 提供第 {target_index} 条快讯")
             else:
-                # 数据获取失败
+                # 数据获取失败或索引超出范围
                 error_message = (
-                    "\n❌ 抱歉，无法获取快讯数据。\n"
+                    f"\n❌ 抱歉，无法获取第 {target_index} 条快讯。\n"
                     "可能的原因：\n"
                     "• API 服务暂时不可用\n"
-                    "• 网络连接问题\n"
-                    "• 服务器维护中\n\n"
+                    "• 当前快讯总数不足\n\n"
                     "如频繁遇到此问题请与民主官联系！🌍"
                 )
                 await handler.send_text(error_message)
-                bot_logger.warning(f"为用户 {handler.user_id} 获取快讯数据失败")
+                bot_logger.warning(f"为用户 {handler.user_id} 获取第 {target_index} 条快讯失败")
                 
         except Exception as e:
             bot_logger.error(f"处理 /news 命令时发生异常: {e}")

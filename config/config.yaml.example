@@ -56,9 +56,9 @@ hd2_api:
   timeout: 30
   # 重试配置
   retry:
-    max_retries: 2
     base_delay: 5.0
     max_delay: 30.0
+    increment: 3.0
   # 请求头配置
   headers:
     user_agent: "hd2_qqbot/1.0"
@@ -75,9 +75,9 @@ translation:
   timeout: 30
   # 重试配置
   retry:
-    max_retries: 3
     base_delay: 2.0
     max_delay: 30.0
+    increment: 3.0
 
 # -----------------------------------------------------------------
 # Steam 内容处理配置

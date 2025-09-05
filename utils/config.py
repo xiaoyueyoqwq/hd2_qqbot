@@ -91,9 +91,9 @@ class Settings:
     # HD2 API 配置
     HD2_API_BASE_URL = _config.get("hd2_api", {}).get("base_url", "https://api.helldivers2.dev")
     HD2_API_TIMEOUT = _config.get("hd2_api", {}).get("timeout", 30)
-    HD2_API_RETRY_MAX = _config.get("hd2_api", {}).get("retry", {}).get("max_retries", 2)
     HD2_API_RETRY_BASE_DELAY = _config.get("hd2_api", {}).get("retry", {}).get("base_delay", 5.0)
     HD2_API_RETRY_MAX_DELAY = _config.get("hd2_api", {}).get("retry", {}).get("max_delay", 30.0)
+    HD2_API_RETRY_INCREMENT = _config.get("hd2_api", {}).get("retry", {}).get("increment", 3.0)
     HD2_API_USER_AGENT = _config.get("hd2_api", {}).get("headers", {}).get("user_agent", "hd2_qqbot/1.0")
     HD2_API_CLIENT = _config.get("hd2_api", {}).get("headers", {}).get("client", "hd2_qqbot")
     HD2_API_CONTACT = _config.get("hd2_api", {}).get("headers", {}).get("contact", "xiaoyueyoqwq@vaiiya.org")
@@ -101,9 +101,9 @@ class Settings:
     # 翻译服务配置
     TRANSLATION_API_URL = _config.get("translation", {}).get("api_url", "https://uapis.cn/api/v1/ai/translate")
     TRANSLATION_TIMEOUT = _config.get("translation", {}).get("timeout", 20)
-    TRANSLATION_RETRY_MAX = _config.get("translation", {}).get("retry", {}).get("max_retries", 3)
     TRANSLATION_RETRY_BASE_DELAY = _config.get("translation", {}).get("retry", {}).get("base_delay", 5.0)
     TRANSLATION_RETRY_MAX_DELAY = _config.get("translation", {}).get("retry", {}).get("max_delay", 60.0)
+    TRANSLATION_RETRY_INCREMENT = _config.get("translation", {}).get("retry", {}).get("increment", 3.0)
     
     # Steam 内容处理配置
     STEAM_MAX_CONTENT_LENGTH = _config.get("steam", {}).get("max_content_length", 2000)

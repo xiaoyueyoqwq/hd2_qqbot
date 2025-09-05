@@ -95,10 +95,11 @@ def clean_game_text(text: str) -> str:
     return cleaned
 
 
-class TranslationService:
+class TranslationService(APIRetryMixin):
     """AI智能翻译服务"""
     
     def __init__(self):
+        super().__init__()
         self.api_url = settings.TRANSLATION_API_URL
         self.timeout = aiohttp.ClientTimeout(total=settings.TRANSLATION_TIMEOUT)
         self.headers = {
@@ -106,121 +107,65 @@ class TranslationService:
             "User-Agent": settings.HD2_API_USER_AGENT
         }
     
-    async def translate_text(self, text: str, to_lang: str = "zh-CN", max_retries: int = None) -> Optional[str]:
+    async def translate_text(self, text: str, to_lang: str = "zh-CN") -> Optional[str]:
         """
         使用AI智能翻译文本（带重试机制）
         
         Args:
             text: 待翻译的文本
             to_lang: 目标语言代码，默认为中文简体(zh-CN)
-            max_retries: 最大重试次数，None时使用配置值
         
         Returns:
             翻译后的文本，失败时返回原文
         """
-        if not text or not text.strip():
+        if not text or not text.strip() or len(text.strip()) < 3:
             return text
         
-        # 如果文本很短，跳过翻译
-        if len(text.strip()) < 3:
-            return text
-        
-        # 使用配置的重试次数
-        if max_retries is None:
-            max_retries = settings.TRANSLATION_RETRY_MAX
-        
-        # 构建请求数据 - 使用新的ai-translator.cc API格式
         payload = {
             "text": text.strip(),
-            "sourceLanguage": "auto",  # 自动检测源语言
-            "targetLanguage": to_lang  # 目标语言
+            "sourceLanguage": "auto",
+            "targetLanguage": to_lang
         }
         
-        # 重试逻辑
-        for attempt in range(max_retries + 1):
-            try:
-                async with aiohttp.ClientSession(timeout=self.timeout) as session:
-                    async with session.post(self.api_url, json=payload, headers=self.headers) as response:
-                        
-                        if response.status == 200:
-                            try:
-                                data = await response.json()
-                                
-                                # 检查新API的响应格式
-                                if "translatedText" in data:
-                                    translated_text = data["translatedText"].strip()
-                                    confidence = data.get("confidence", 0)
-                                    translator_used = data.get("translatorUsed", "unknown")
-                                    
-                                    if translated_text and translated_text != text.strip():
-                                        if attempt > 0:
-                                            bot_logger.info(f"AI翻译成功 (第{attempt+1}次尝试, {translator_used}, 置信度: {confidence:.2f}): '{text[:30]}...' -> '{translated_text[:30]}...'")
-                                        else:
-                                            bot_logger.info(f"AI翻译成功 ({translator_used}, 置信度: {confidence:.2f}): '{text[:30]}...' -> '{translated_text[:30]}...'")
-                                        return translated_text
-                                    else:
-                                        bot_logger.warning(f"AI翻译结果为空或与原文相同: '{text[:30]}...'")
-                                        return text
+        async def _api_call():
+            async with aiohttp.ClientSession(timeout=self.timeout) as session:
+                async with session.post(self.api_url, json=payload, headers=self.headers) as response:
+                    if response.status == 200:
+                        try:
+                            data = await response.json()
+                            if "translatedText" in data:
+                                translated_text = data["translatedText"].strip()
+                                if translated_text and translated_text != text.strip():
+                                    return translated_text
                                 else:
-                                    error_msg = data.get('error', 'Unknown error')
-                                    if attempt < max_retries:
-                                        bot_logger.warning(f"AI翻译API返回错误 (第{attempt+1}次尝试): {error_msg}，{settings.TRANSLATION_RETRY_BASE_DELAY}秒后重试...")
-                                        await asyncio.sleep(settings.TRANSLATION_RETRY_BASE_DELAY)
-                                        continue
-                                    else:
-                                        bot_logger.error(f"AI翻译API最终失败: {error_msg}")
-                                        return text
-                            except Exception as json_error:
-                                if attempt < max_retries:
-                                    bot_logger.warning(f"解析AI翻译API响应JSON失败 (第{attempt+1}次尝试): {json_error}，{settings.TRANSLATION_RETRY_BASE_DELAY}秒后重试...")
-                                    await asyncio.sleep(settings.TRANSLATION_RETRY_BASE_DELAY)
-                                    continue
-                                else:
-                                    bot_logger.error(f"解析AI翻译API响应JSON最终失败: {json_error}")
-                                    return text
-                        else:
-                            # 非200状态码，进行重试
-                            if attempt < max_retries:
-                                response_text = await response.text()
-                                bot_logger.warning(f"AI翻译API请求失败 (第{attempt+1}次尝试): 状态码 {response.status}，{settings.TRANSLATION_RETRY_BASE_DELAY}秒后重试...")
-                                if response_text:
-                                    bot_logger.debug(f"错误响应: {response_text[:200]}...")
-                                await asyncio.sleep(settings.TRANSLATION_RETRY_BASE_DELAY)
-                                continue
+                                    bot_logger.warning(f"AI翻译结果为空或与原文相同: '{text[:30]}...'")
+                                    return text  # 返回原文表示翻译无效
                             else:
-                                response_text = await response.text()
-                                bot_logger.error(f"AI翻译API最终失败: 状态码 {response.status}")
-                                if response_text:
-                                    bot_logger.error(f"错误响应: {response_text[:200]}...")
-                                return text
-                                
-            except asyncio.TimeoutError:
-                if attempt < max_retries:
-                    bot_logger.warning(f"AI翻译API请求超时 (第{attempt+1}次尝试)，{settings.TRANSLATION_RETRY_BASE_DELAY}秒后重试...")
-                    await asyncio.sleep(settings.TRANSLATION_RETRY_BASE_DELAY)
-                    continue
-                else:
-                    bot_logger.error("AI翻译API请求最终超时")
-                    return text
-            except aiohttp.ClientError as e:
-                if attempt < max_retries:
-                    bot_logger.warning(f"AI翻译API网络错误 (第{attempt+1}次尝试): {e}，{settings.TRANSLATION_RETRY_BASE_DELAY}秒后重试...")
-                    await asyncio.sleep(settings.TRANSLATION_RETRY_BASE_DELAY)
-                    continue
-                else:
-                    bot_logger.error(f"AI翻译API网络最终失败: {e}")
-                    return text
-            except Exception as e:
-                if attempt < max_retries:
-                    bot_logger.warning(f"AI翻译请求异常 (第{attempt+1}次尝试): {e}，{settings.TRANSLATION_RETRY_BASE_DELAY}秒后重试...")
-                    await asyncio.sleep(settings.TRANSLATION_RETRY_BASE_DELAY)
-                    continue
-                else:
-                    bot_logger.error(f"AI翻译请求最终异常: {e}")
-                    return text
-        
-        # 如果所有重试都失败，返回原文
-        return text
+                                error_msg = data.get('error', 'Unknown error')
+                                bot_logger.error(f"AI翻译API返回错误: {error_msg}")
+                                return None # API逻辑错误
+                        except Exception as json_error:
+                            bot_logger.error(f"解析AI翻译API响应JSON失败: {json_error}")
+                            return None # JSON解析错误
+                    else:
+                        # 返回带状态码的响应对象，让重试机制处理
+                        class APIResponse:
+                            def __init__(self, status):
+                                self.status = status
+                        return APIResponse(response.status)
+
+        result = await self.retry_api_call(
+            _api_call,
+            base_delay=settings.TRANSLATION_RETRY_BASE_DELAY,
+            max_delay=settings.TRANSLATION_RETRY_MAX_DELAY,
+            increment=settings.TRANSLATION_RETRY_INCREMENT
+        )
+
+        if result and not hasattr(result, 'status'):
+            return result
+        else:
+            bot_logger.error(f"AI翻译最终失败，返回原文: '{text[:30]}...'")
+            return text
 
 
 class DispatchService(APIRetryMixin):

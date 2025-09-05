@@ -33,9 +33,6 @@ class OrderPlugin(Plugin):
         bot_logger.info(f"用户 {handler.user_id} 请求最高命令数据")
         
         try:
-            # 发送"正在查询"的提示消息
-            await handler.send_text("\n🔍 正在查询最高命令，请稍候...")
-            
             # 获取最高命令数据
             orders_data = await order_service.get_current_orders()
             

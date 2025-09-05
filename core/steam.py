@@ -127,13 +127,17 @@ class SteamService(APIRetryMixin):
             bot_logger.error(f"刷新Steam缓存时发生错误: {e}")
             return False
     
-    async def _translate_and_cache_updates(self, updates: List[Dict[str, Any]]) -> None:
+    async def _translate_and_cache_updates(self, updates: List[Dict[str, Any]]) -> bool:
         """
         翻译并缓存Steam更新数据
         
         Args:
             updates: Steam更新数据列表
+        
+        Returns:
+            bool: 如果所有更新都成功处理则返回True，否则返回False
         """
+        all_successful = True
         for update in updates:
             try:
                 item_id = str(update.get('id', ''))
@@ -167,6 +171,12 @@ class SteamService(APIRetryMixin):
                         if content_result and content_result != original_content:
                             translated_content = content_result
                     
+                    # 如果翻译失败，则跳过此更新的缓存
+                    if not translated_title and not translated_content and (original_title or original_content):
+                        bot_logger.error(f"Steam更新 #{item_id} 翻译完全失败，跳过缓存。")
+                        all_successful = False
+                        continue
+
                     # 构建翻译结果（包含原文作为备份）
                     final_title = translated_title if translated_title else original_title
                     final_content = translated_content if translated_content else original_content
@@ -201,6 +211,9 @@ class SteamService(APIRetryMixin):
                 
             except Exception as e:
                 bot_logger.error(f"翻译Steam更新 {update.get('id')} 时发生错误: {e}")
+                all_successful = False
+        
+        return all_successful
     
     async def get_latest_steam_update(self) -> Optional[Dict[str, Any]]:
         """
@@ -221,7 +234,10 @@ class SteamService(APIRetryMixin):
                 if api_data:
                     # 只缓存最新的一条数据
                     latest_update = api_data[:1]
-                    await self._translate_and_cache_updates(latest_update)
+                    if not await self._translate_and_cache_updates(latest_update):
+                        bot_logger.error("获取并翻译最新的Steam更新失败。")
+                        return None
+                        
                     await translation_cache.store_content_list('steam', latest_update)
                     cached_updates = latest_update
                 else:
@@ -307,7 +323,7 @@ class SteamService(APIRetryMixin):
             message += f"▎时间: {published_time}\n"
             message += "-------------\n"
             message += f"▎内容:\n{translated_content}\n"
-            message += "-------------\n"
+            message += "-------------"
             
             if url:
                 message += f"🔗 详细信息: {url}\n"
