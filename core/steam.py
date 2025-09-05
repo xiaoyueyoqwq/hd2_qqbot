@@ -135,9 +135,10 @@ class SteamService(APIRetryMixin):
             updates: Steam更新数据列表
         
         Returns:
-            bool: 如果所有更新都成功处理则返回True，否则返回False
+            bool: 如果至少有一个更新被成功处理，则返回True
         """
         all_successful = True
+        processed_count = 0
         for update in updates:
             try:
                 item_id = str(update.get('id', ''))
@@ -145,6 +146,7 @@ class SteamService(APIRetryMixin):
                 original_content = update.get('content', '')
                 
                 if not original_title and not original_content:
+                    bot_logger.debug(f"Steam更新 #{item_id} 标题和内容都为空，跳过。")
                     continue
                 
                 # 检查是否已有翻译缓存
@@ -199,6 +201,7 @@ class SteamService(APIRetryMixin):
                         await translation_cache.store_translated_content(
                             'steam', item_id, original_text, translated_text, metadata
                         )
+                        processed_count += 1
                         if translated_title or translated_content:
                             bot_logger.debug(f"Steam更新 #{item_id} 部分翻译成功并已缓存")
                         else:
@@ -213,7 +216,7 @@ class SteamService(APIRetryMixin):
                 bot_logger.error(f"翻译Steam更新 {update.get('id')} 时发生错误: {e}")
                 all_successful = False
         
-        return all_successful
+        return all_successful and processed_count > 0
     
     async def get_latest_steam_update(self) -> Optional[Dict[str, Any]]:
         """
@@ -280,7 +283,8 @@ class SteamService(APIRetryMixin):
                     bot_logger.info(f"Steam更新 #{update_id} 强制刷新翻译成功，重新获取缓存。")
                     cached_translation = await translation_cache.get_translated_content('steam', str(update_id))
                 else:
-                    bot_logger.warning(f"Steam更新 #{update_id} 强制刷新翻译失败，将使用原文。")
+                    bot_logger.warning(f"Steam更新 #{update_id} 强制刷新翻译失败，无法提供内容。")
+                    return "\n❌ 抱歉，无法获取或翻译最新的Steam更新日志。"
 
             title = update.get('title', '无标题')
             content = update.get('content', '无内容')
