@@ -4,9 +4,9 @@ import random
 
 from utils.logger import bot_logger
 from .url_check import obfuscate_urls
-from .messaging.enums import MessageType, FileType
-from .messaging.config import MessageConfig
-from .messaging.controller import MessageController
+from core.constants import MessageType, FileType
+# from .messaging.config import MessageConfig
+# from .messaging.controller import MessageController
 
 class MessageAPI:
     """
@@ -15,17 +15,17 @@ class MessageAPI:
     """
     def __init__(self, api: Any, config: Dict = None):
         self._api = api
-        self.config = MessageConfig()
-        self.config.validate()
-        # controller 现在是可选的，因为并非所有操作都需要它
-        self.controller = MessageController(self.config)
+        # self.config = MessageConfig()
+        # self.config.validate()
+        # # controller 现在是可选的，因为并非所有操作都需要它
+        # self.controller = MessageController(self.config)
         self._show_message_id = config.get("message_id", False) if config else False
-        asyncio.create_task(self.controller.start())
+        # asyncio.create_task(self.controller.start())
         bot_logger.info("MessageAPI初始化完成")
         
     async def cleanup(self):
         """清理资源"""
-        await self.controller.stop()
+        # await self.controller.stop()
         bot_logger.info("MessageAPI资源已清理")
         
     def create_media_payload(self, file_info: str) -> Dict:

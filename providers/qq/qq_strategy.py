@@ -4,7 +4,7 @@ from core.events import GenericMessage
 from utils.message_api import MessageAPI
 from utils.image_manager import ImageManager
 from utils.config import settings
-from utils.messaging.enums import MessageType, FileType
+from core.constants import MessageType
 
 class QQStrategy(IMessageStrategy):
     """
