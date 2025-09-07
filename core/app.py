@@ -47,6 +47,11 @@ class CoreApp:
         """
         handler = MessageHandler(message)
         
+        # 彩蛋：检查是否输入了特殊序列
+        if message.content.strip() == "↑←↓↓↓":
+            await handler.send_text("超级地球是投注")
+            return
+        
         # 交由插件处理
         try:
             async with self.semaphore, asyncio.timeout(30):  # 使用配置的超时
