@@ -153,19 +153,21 @@ class OrderService:
                         if task_result and task_result != original_task:
                             translated_task = task_result
                     
-                    # 构建翻译结果（包含原文作为备份）
-                    final_title = translated_title if translated_title else original_title
-                    final_brief = translated_brief if translated_brief else original_brief
-                    final_task = translated_task if translated_task else original_task
-                    translated_text = f"{final_title}\n{final_brief}\n{final_task}"
-                    
-                    # 存储缓存（无论翻译是否成功，都要缓存以避免重复处理）
-                    if translated_text:
+                    # 只有在至少一个字段成功翻译的情况下才进行缓存
+                    if any([translated_title, translated_brief, translated_task]):
+                        bot_logger.debug(f"最高命令 #{item_id} 至少有一部分翻译成功，进行缓存。")
+                        
+                        # 构建翻译结果（包含原文作为备份）
+                        final_title = translated_title if translated_title else original_title
+                        final_brief = translated_brief if translated_brief else original_brief
+                        final_task = translated_task if translated_task else original_task
+                        translated_text = f"{final_title}\n{final_brief}\n{final_task}"
+                        
                         # 存储翻译结果
                         metadata = {
-                            'translated_title': translated_title if translated_title else original_title,
-                            'translated_brief': translated_brief if translated_brief else original_brief,
-                            'translated_task': translated_task if translated_task else original_task,
+                            'translated_title': translated_title,
+                            'translated_brief': translated_brief,
+                            'translated_task': translated_task,
                             'original_title': original_title,
                             'original_brief': original_brief,
                             'original_task': original_task,
@@ -175,10 +177,10 @@ class OrderService:
                         await translation_cache.store_translated_content(
                             'orders', item_id, original_text, translated_text, metadata
                         )
-                        if translated_title or translated_brief or translated_task:
-                            bot_logger.debug(f"最高命令 #{item_id} 部分翻译成功并已缓存")
-                        else:
-                            bot_logger.debug(f"最高命令 #{item_id} 翻译失败，但原文已缓存")
+                    else:
+                        bot_logger.warning(f"最高命令 #{item_id} 所有字段翻译失败，将添加到重试队列。")
+                        # (可选) 未来可以添加到翻译重试队列
+                        # await translation_retry_queue.add_retry_task(...)
                 else:
                     bot_logger.debug(f"最高命令 #{item_id} 已有有效翻译缓存")
                     
@@ -213,33 +215,37 @@ class OrderService:
                 brief = setting.get("overrideBrief", "")
                 task_desc = setting.get("taskDescription", "")
                 
+                # 检查翻译并按需刷新
+                cached_translation = await translation_cache.get_translated_content('orders', order_id)
+                is_translated = (
+                    cached_translation and cached_translation.get('metadata') and
+                    any([
+                        cached_translation['metadata'].get('translated_title'),
+                        cached_translation['metadata'].get('translated_brief'),
+                        cached_translation['metadata'].get('translated_task')
+                    ])
+                )
+
+                if not is_translated:
+                    bot_logger.info(f"最高命令 #{order_id} 没有有效翻译，尝试强制刷新...")
+                    await self._translate_and_cache_orders([order])
+                    cached_translation = await translation_cache.get_translated_content('orders', order_id) # 重新获取
+                
                 # 从缓存获取翻译内容
                 translated_title = title
                 translated_brief = brief
                 translated_task = task_desc
                 
-                # 尝试获取缓存翻译（包括ID为0的情况）
-                if order_id:
-                    cached_translation = await translation_cache.get_translated_content('orders', order_id)
+                if cached_translation and cached_translation.get('metadata'):
+                    metadata = cached_translation['metadata']
+                    # 优先使用翻译，如果翻译为空则回退到原文
+                    translated_title = metadata.get('translated_title') or title
+                    translated_brief = metadata.get('translated_brief') or brief
+                    translated_task = metadata.get('translated_task') or task_desc
                     
-                    if cached_translation and cached_translation.get('metadata'):
-                        metadata = cached_translation['metadata']
-                        cached_title = metadata.get('translated_title', '')
-                        cached_brief = metadata.get('translated_brief', '')
-                        cached_task = metadata.get('translated_task', '')
-                        
-                        if cached_title:
-                            translated_title = cached_title
-                        if cached_brief:
-                            translated_brief = cached_brief
-                        if cached_task:
-                            translated_task = cached_task
-                        
-                        bot_logger.debug(f"使用缓存翻译：最高命令 #{order_id}")
-                    else:
-                        # 如果没有缓存翻译，使用原文（避免重复翻译）
-                        # 翻译应该在缓存阶段完成，这里只是显示
-                        bot_logger.warning(f"最高命令 #{order_id} 没有缓存翻译，使用原文显示")
+                    bot_logger.debug(f"使用缓存翻译：最高命令 #{order_id}")
+                else:
+                    bot_logger.warning(f"最高命令 #{order_id} 没有缓存翻译，使用原文显示")
                 
                 # 清理游戏格式标签
                 translated_title = clean_game_text(translated_title)
@@ -262,27 +268,38 @@ class OrderService:
                 if task_desc:
                     message += f"▎任务: {task_desc}\n"
                 
-                # 显示进度
+                # --- 重新设计进度显示 ---
+                tasks = setting.get("tasks", [])
                 progress = order.get("progress", [])
-                if progress:
-                    progress_value = progress[0] if progress else 0
-                    # 格式化进度值，通常需要除以100万得到百分比
-                    formatted_progress = progress_value / 1000000 if progress_value > 1000 else progress_value
-                    
-                    # 智能格式化百分比：根据数值选择合适的小数位数
-                    if formatted_progress >= 10:
-                        # 大于等于10%，显示1位小数
-                        message += f"▎进度: {formatted_progress:.1f}%\n"
-                    elif formatted_progress >= 1:
-                        # 1%到10%之间，显示2位小数
-                        message += f"▎进度: {formatted_progress:.2f}%\n"
-                    else:
-                        # 小于1%，显示3位小数
-                        message += f"▎进度: {formatted_progress:.3f}%\n"
-                
-                # 显示过期时间
+
+                for i, task in enumerate(tasks):
+                    # 确保进度和任务数据可用
+                    if i < len(progress) and task.get("values"):
+                        task_values = task.get("values", [])
+                        
+                        # 根据HD2-API文档，目标值通常在第3个位置 (index 2)
+                        if len(task_values) > 2:
+                            current_progress = progress[i]
+                            target = task_values[2]
+                            
+                            if target > 0:
+                                percentage = (current_progress / target) * 100
+                                # 智能格式化百分比
+                                if percentage >= 10:
+                                    formatted_progress = f"{percentage:.1f}%"
+                                elif percentage >= 1:
+                                    formatted_progress = f"{percentage:.2f}%"
+                                else:
+                                    formatted_progress = f"{percentage:.3f}%"
+                                
+                                message += f"▎任务{i+1}进度: {formatted_progress} ({current_progress:,} / {target:,})\n"
+
+                # --- 剩余时间与结束时间 ---
                 expires_in = order.get("expiresIn", 0)
                 if expires_in > 0:
+                    from datetime import datetime, timedelta
+                    
+                    # 剩余时间
                     hours = expires_in // 3600
                     minutes = (expires_in % 3600) // 60
                     if hours > 0:

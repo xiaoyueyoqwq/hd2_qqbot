@@ -267,13 +267,17 @@ class DispatchService(APIRetryMixin):
             bot_logger.error(f"刷新缓存时发生错误: {e}")
             return False
     
-    async def _translate_and_cache_dispatches(self, dispatches: List[Dict[str, Any]]) -> None:
+    async def _translate_and_cache_dispatches(self, dispatches: List[Dict[str, Any]]) -> bool:
         """
         翻译并缓存快讯数据
-        
+
         Args:
             dispatches: 快讯数据列表
+        
+        Returns:
+            bool: 如果至少有一条快讯被成功翻译和缓存，则返回 True
         """
+        processed_count = 0
         for dispatch in dispatches:
             try:
                 item_id = str(dispatch.get('id', 0))
@@ -303,6 +307,7 @@ class DispatchService(APIRetryMixin):
                         await translation_cache.store_translated_content(
                             'dispatches', item_id, original_message, translated_text, metadata
                         )
+                        processed_count += 1
                         bot_logger.debug(f"快讯 #{item_id} 翻译成功并已缓存")
                     else:
                         # 翻译失败，添加到重试队列
@@ -318,16 +323,19 @@ class DispatchService(APIRetryMixin):
                         bot_logger.info(f"快讯 #{item_id} 翻译失败，已添加到重试队列")
                 else:
                     bot_logger.debug(f"快讯 #{item_id} 已有有效翻译缓存")
+                    processed_count += 1 # 已有缓存也视为成功处理
                     
                 # 添加小延迟避免API调用过快
                 await asyncio.sleep(0.1)
                 
             except Exception as e:
                 bot_logger.error(f"翻译快讯 {dispatch.get('id')} 时发生错误: {e}")
+        
+        return processed_count > 0
     
     async def get_dispatches(self, limit: int = 5) -> Optional[List[Dict[str, Any]]]:
         """
-        获取快讯数据（优先从缓存）
+        获取快讯数据（优先从缓存），并确保有效性
         缓存刷新由轮转系统自动处理
         默认获取最新的5条快讯
         
@@ -338,22 +346,29 @@ class DispatchService(APIRetryMixin):
             快讯列表或None(如果获取失败)
         """
         try:
-            # 从缓存获取快讯列表
+            # 内部函数，用于从API获取并处理数据
+            async def _fetch_and_process_api_data():
+                api_data = await self.fetch_dispatches_from_api()
+                if not api_data:
+                    return None
+                
+                dispatches_to_process = api_data[:5]
+                if await self._translate_and_cache_dispatches(dispatches_to_process):
+                    await translation_cache.store_content_list('dispatches', dispatches_to_process)
+                    return dispatches_to_process
+                return None
+
+            # 1. 尝试从缓存获取
             cached_dispatches = await translation_cache.get_content_list('dispatches')
             
+            # 2. 如果缓存为空，直接从API获取
             if not cached_dispatches:
-                bot_logger.info("缓存中没有快讯数据，尝试直接从API获取")
-                # 如果缓存为空，直接从API获取并缓存
-                api_data = await self.fetch_dispatches_from_api()
-                if api_data:
-                    # 只缓存前5条数据
-                    await self._translate_and_cache_dispatches(api_data[:5])
-                    await translation_cache.store_content_list('dispatches', api_data[:5])
-                    cached_dispatches = api_data[:limit]
-                else:
+                bot_logger.info("快讯缓存为空，从API获取。")
+                cached_dispatches = await _fetch_and_process_api_data()
+                if not cached_dispatches:
                     return None
             
-            # 限制返回数量
+            # 3. 限制返回数量并返回
             return cached_dispatches[:limit]
             
         except Exception as e:
@@ -379,30 +394,27 @@ class DispatchService(APIRetryMixin):
             
             for i, dispatch in enumerate(dispatches, start_index):
                 # 获取基本信息
-                dispatch_id = dispatch.get('id', 0)
+                dispatch_id = str(dispatch.get('id', 0))
                 published_time = self._format_time(dispatch.get('published', ''))
                 dispatch_type = self._get_dispatch_type_name(dispatch.get('type', 0))
                 original_message = dispatch.get('message', '无内容')
                 
-                # 从缓存获取翻译内容
-                translated_message = original_message
-                cached_translation = await translation_cache.get_translated_content('dispatches', str(dispatch_id))
+                # 即时翻译检查
+                cached_translation = await translation_cache.get_translated_content('dispatches', dispatch_id)
                 
+                if not (cached_translation and cached_translation.get('translated_text')):
+                    bot_logger.info(f"快讯 #{dispatch_id} 没有缓存翻译，进行即时翻译和缓存...")
+                    if not await self._translate_and_cache_dispatches([dispatch]):
+                        bot_logger.warning(f"快讯 #{dispatch_id} 即时翻译失败，将显示原文。")
+                    else:
+                        bot_logger.info(f"快讯 #{dispatch_id} 即时翻译成功。")
+                        cached_translation = await translation_cache.get_translated_content('dispatches', dispatch_id)
+
+                # 使用翻译（如果存在），否则回退到原文
+                translated_message = original_message
                 if cached_translation and cached_translation.get('translated_text'):
                     translated_message = cached_translation['translated_text']
                     bot_logger.debug(f"使用缓存翻译：快讯 #{dispatch_id}")
-                elif original_message and original_message != '无内容':
-                    # 如果没有缓存翻译，触发即时翻译和缓存
-                    bot_logger.info(f"快讯 #{dispatch_id} 没有缓存翻译，进行即时翻译和缓存...")
-                    await self._translate_and_cache_dispatches([dispatch])
-                    
-                    # 重新获取缓存
-                    new_cached_translation = await translation_cache.get_translated_content('dispatches', str(dispatch_id))
-                    if new_cached_translation and new_cached_translation.get('translated_text'):
-                        translated_message = new_cached_translation['translated_text']
-                        bot_logger.info(f"快讯 #{dispatch_id} 即时翻译成功。")
-                    else:
-                        bot_logger.warning(f"快讯 #{dispatch_id} 即时翻译失败，将显示原文。")
 
                 # 清理游戏格式标签
                 translated_message = clean_game_text(translated_message)

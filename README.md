@@ -137,9 +137,11 @@ hd2_qqbot/
 │   ├── stats.py         # 统计数据服务
 │   └── plugin.py        # 插件系统
 ├── plugins/              # 功能插件
-│   ├── help_plugin.py   # 帮助插件
-│   ├── plugin_news.py   # 快讯插件
-│   ├── order_plugin.py  # 命令插件
+│   ├── __init__.py
+│   ├── base_plugin.py     # 插件基类
+│   ├── plugin_help.py   # 帮助插件
+│   ├── order_plugin.py    # 最高命令插件
+│   ├── news_plugin.py     # 新闻快讯插件
 │   └── plugin_stats.py  # 统计插件
 ├── utils/                # 工具模块
 │   ├── config.py        # 配置管理
