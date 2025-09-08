@@ -349,10 +349,6 @@ class SteamService(APIRetryMixin):
             message += f"▎内容:\n{translated_content}\n"
             message += "-------------"
             
-            if url:
-                message += f"🔗 详细信息: {url}\n"
-                message += "-------------"
-            
             return message
             
         except Exception as e:
