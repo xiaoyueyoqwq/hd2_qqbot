@@ -48,7 +48,7 @@ class CoreApp:
         handler = MessageHandler(message)
         
         # 彩蛋：检查是否输入了特殊序列
-        if message.content.strip() == "↑←↓↓↓":
+        if message.content.strip() == "↑→↓↓↓":
             await handler.send_text("超级地球是投注")
             return
         
