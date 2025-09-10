@@ -1,0 +1,14 @@
+aiohttp
+asyncio-mqtt
+botpy
+fastapi
+uvicorn
+orjson
+redis
+httpx
+loguru
+playwright
+pytz
+aiohttp-cors
+pytest
+pytest-asyncio
