@@ -18,53 +18,49 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 from utils.logger import bot_logger
-from utils.api_retry import APIRetryMixin
+from utils.cache_manager import api_cache_manager, CacheConfig
+from utils.config import Settings
 
-class StatsService(APIRetryMixin):
+
+class StatsService:
     """战争统计服务（使用新的war API）"""
-    
+
     def __init__(self):
-        super().__init__()
         self.api_url = "https://api.helldivers2.dev/api/v1/war"
         self.timeout = aiohttp.ClientTimeout(total=10)
-        
+        self._register_caches()
+
+    def _register_caches(self):
+        """注册缓存"""
+        stats_cache_config = CacheConfig(
+            key="hd2:stats:war",
+            api_url=self.api_url,
+            headers={
+                'X-Super-Client': 'hd2_qqbot',
+                'X-Super-Contact': 'xiaoyueyoqwq@vaiiya.org',
+                'User-Agent': 'Helldivers2-QQBot/1.0'
+            }
+        )
+        api_cache_manager.register_cache("war_stats", stats_cache_config)
+
     async def get_war_summary(self) -> Optional[Dict[str, Any]]:
         """
-        从新API获取战争总览统计数据（带重试机制）
+        从缓存获取战争总览统计数据
         
         Returns:
             包含银河战争统计数据的字典，失败时返回 None
         """
-        # 设置必需的headers
-        headers = {
-            'X-Super-Client': 'hd2_qqbot',
-            'X-Super-Contact': 'xiaoyueyoqwq@vaiiya.org',
-            'User-Agent': 'Helldivers2-QQBot/1.0'
-        }
-        
-        async def _api_call():
-            async with aiohttp.ClientSession(timeout=self.timeout) as session:
-                bot_logger.debug(f"正在从API获取战争统计数据: {self.api_url}")
-                async with session.get(self.api_url, headers=headers) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        bot_logger.debug("成功从API获取战争统计数据")
-                        return data
-                    else:
-                        # 返回带状态码的响应对象，让重试机制处理
-                        class APIResponse:
-                            def __init__(self, status):
-                                self.status = status
-                        return APIResponse(response.status)
-        
-        # 使用重试机制调用API
-        result = await self.retry_api_call(_api_call)
-        
-        # 如果结果是APIResponse对象，说明请求失败
-        if hasattr(result, 'status'):
+        try:
+            data = await api_cache_manager.get_cached_data("war_stats")
+            if data:
+                bot_logger.debug("成功从缓存获取战争统计数据")
+                return data
+            else:
+                bot_logger.warning("从缓存获取战争统计数据失败，可能正在更新或API不可用")
+                return None
+        except Exception as e:
+            bot_logger.error(f"获取战争统计数据时发生异常: {e}", exc_info=True)
             return None
-            
-        return result
     
     def _format_time_duration(self, started: str, now: str) -> str:
         """

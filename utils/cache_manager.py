@@ -20,7 +20,7 @@ class CacheConfig:
     key: str  # Redis键名
     api_fetcher: Callable  # API获取函数
     update_interval: int = 30  # 更新间隔（秒）
-    expiry: int = 3600  # 过期时间（秒）
+    expiry: int = 36000  # 过期时间（秒）
     enabled: bool = True  # 是否启用缓存
 
 
