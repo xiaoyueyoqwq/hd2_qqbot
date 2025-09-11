@@ -72,18 +72,43 @@ class HD2CacheService:
         bot_logger.info("HD2缓存服务初始化完成")
     
     async def _fetch_war_summary(self) -> Optional[Dict[str, Any]]:
-        """获取战争统计数据"""
+        """获取完整的战争数据（包含playerCount和impactMultiplier）"""
         try:
-            endpoint = f"/raw/api/Stats/war/{self.war_id}/summary"
-            response = await hd2_api.get(endpoint)
+            # 使用完整的war API获取所有数据
+            import aiohttp
+            headers = {
+                'X-Super-Client': 'hd2_qqbot',
+                'X-Super-Contact': 'xiaoyueyoqwq@vaiiya.org',
+                'User-Agent': 'Helldivers2-QQBot/1.0',
+                'Accept': 'application/json'
+            }
             
-            if response and "galaxy_stats" in response:
-                bot_logger.debug("成功获取战争统计数据")
-                return response["galaxy_stats"]
-            else:
-                bot_logger.warning("API响应中缺少galaxy_stats数据")
-                return None
-                
+            async with aiohttp.ClientSession() as session:
+                url = "https://api.helldivers2.dev/api/v1/war"
+                async with session.get(url, headers=headers) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        
+                        # 构建包含所有需要字段的统计数据
+                        if 'statistics' in data:
+                            statistics = data['statistics'].copy()
+                            # 添加playerCount和impactMultiplier到统计数据中
+                            statistics['playerCount'] = statistics.get('playerCount', 0)
+                            statistics['impactMultiplier'] = data.get('impactMultiplier', 0)
+                            
+                            # 处理字段名差异，确保使用bugKills作为terminidKills的别名
+                            if 'terminidKills' in statistics:
+                                statistics['bugKills'] = statistics['terminidKills']
+                                
+                            bot_logger.debug("成功获取完整战争统计数据")
+                            return statistics
+                        else:
+                            bot_logger.warning("API响应中缺少statistics数据")
+                            return None
+                    else:
+                        bot_logger.warning(f"API请求失败，状态码: {response.status}")
+                        return None
+                        
         except Exception as e:
             bot_logger.error(f"获取战争统计数据时发生错误: {e}")
             return None

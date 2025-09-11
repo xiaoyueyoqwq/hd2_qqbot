@@ -157,20 +157,10 @@ class StatsService:
                 impact_multiplier = war_data.get('impactMultiplier', 0)
                 player_count = statistics.get('playerCount', 0)
             else:
-                # 来自hd2_cache的格式：直接是统计数据，需要从原始API获取其他字段
+                # 来自hd2_cache的格式：现在已包含所有需要的字段
                 statistics = war_data
-                # 尝试从原始API获取完整数据以获取playerCount和impactMultiplier
-                try:
-                    raw_data = await self._fetch_war_data()
-                    if raw_data:
-                        impact_multiplier = raw_data.get('impactMultiplier', 0)
-                        player_count = raw_data.get('statistics', {}).get('playerCount', 0)
-                    else:
-                        impact_multiplier = 0
-                        player_count = 0
-                except:
-                    impact_multiplier = 0
-                    player_count = 0
+                impact_multiplier = statistics.get('impactMultiplier', 0)
+                player_count = statistics.get('playerCount', 0)
             
             message = "\n📊 银河战争统计 | HELLDIVERS 2\n"
             message += "-------------\n"
