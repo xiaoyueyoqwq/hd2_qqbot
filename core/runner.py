@@ -134,6 +134,18 @@ async def _async_main() -> None:
         await api_cache_manager.start()
         bot_logger.info("缓存系统启动完成")
         
+        # 等待初始缓存数据加载
+        import asyncio
+        bot_logger.info("等待初始缓存数据加载...")
+        await asyncio.sleep(3)
+        
+        # 检查缓存状态
+        cache_status = await hd2_cache_service.get_cache_status()
+        for cache_name, status in cache_status.items():
+            has_data = status.get('has_data', False)
+            bot_logger.info(f"缓存状态 {cache_name}: {'✅已就绪' if has_data else '⚠️数据加载中'}")
+        bot_logger.info("缓存数据加载检查完成")
+        
         # 初始化智能翻译缓存轮转系统
         try:
             from utils.cache_rotation_integration import cache_rotation_integration

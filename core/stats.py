@@ -150,15 +150,33 @@ class StatsService:
                     return f"{hours:,}小时"
                 return "0小时"
             
-            # 获取统计数据
-            statistics = war_data.get('statistics', {})
-            
+            # 获取统计数据（适配两种数据格式）
+            if 'statistics' in war_data:
+                # 来自原始API的格式：{'statistics': {...}}
+                statistics = war_data.get('statistics', {})
+                impact_multiplier = war_data.get('impactMultiplier', 0)
+                player_count = statistics.get('playerCount', 0)
+            else:
+                # 来自hd2_cache的格式：直接是统计数据，需要从原始API获取其他字段
+                statistics = war_data
+                # 尝试从原始API获取完整数据以获取playerCount和impactMultiplier
+                try:
+                    raw_data = await self._fetch_war_data()
+                    if raw_data:
+                        impact_multiplier = raw_data.get('impactMultiplier', 0)
+                        player_count = raw_data.get('statistics', {}).get('playerCount', 0)
+                    else:
+                        impact_multiplier = 0
+                        player_count = 0
+                except:
+                    impact_multiplier = 0
+                    player_count = 0
             
             message = "\n📊 银河战争统计 | HELLDIVERS 2\n"
             message += "-------------\n"
             message += "🌌战争信息\n"
-            message += f"▎在线玩家: {format_number(statistics.get('playerCount', 0))}\n"
-            message += f"▎影响系数: {war_data.get('impactMultiplier', 0):.6f}\n"
+            message += f"▎在线玩家: {format_number(player_count)}\n"
+            message += f"▎影响系数: {impact_multiplier:.6f}\n"
             message += f"▎发射子弹: {format_number(statistics.get('bulletsFired', 0))}\n"
             message += f"▎冻肉储备数: {format_number(statistics.get('friendlies', 0))}\n"
             message += "-------------\n"
@@ -169,11 +187,18 @@ class StatsService:
             message += f"▎总任务时间: {format_time_hours(statistics.get('timePlayed', 0))}\n"
             message += "-------------\n"
             message += "⚔️战斗统计\n"
-            message += f"▎虫族击杀: {format_number(statistics.get('terminidKills', 0))}\n"
-            message += f"▎机器人击杀: {format_number(statistics.get('automatonKills', 0))}\n"
-            message += f"▎光能族击杀: {format_number(statistics.get('illuminateKills', 0))}\n"
-            message += f"▎阵亡次数: {format_number(statistics.get('deaths', 0))}\n"
-            message += f"▎TK伤亡: {format_number(statistics.get('friendlies', 0))}\n"
+            # 处理不同API的字段名差异
+            terminid_kills = statistics.get('terminidKills', 0) or statistics.get('bugKills', 0)
+            automaton_kills = statistics.get('automatonKills', 0)
+            illuminate_kills = statistics.get('illuminateKills', 0)
+            deaths = statistics.get('deaths', 0)
+            friendlies = statistics.get('friendlies', 0)
+            
+            message += f"▎虫族击杀: {format_number(terminid_kills)}\n"
+            message += f"▎机器人击杀: {format_number(automaton_kills)}\n"
+            message += f"▎光能族击杀: {format_number(illuminate_kills)}\n"
+            message += f"▎阵亡次数: {format_number(deaths)}\n"
+            message += f"▎TK伤亡: {format_number(friendlies)}\n"
             message += "-------------"
             
             return message
