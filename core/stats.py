@@ -75,13 +75,21 @@ class StatsService:
             包含银河战争统计数据的字典，失败时返回 None
         """
         try:
-            data = await api_cache_manager.get_cached_data("war_stats")
+            # 优先从统一缓存管理器获取数据
+            from utils.hd2_cache import hd2_cache_service
+            data = await hd2_cache_service.get_war_summary()
             if data:
                 bot_logger.debug("成功从缓存获取战争统计数据")
                 return data
             else:
-                bot_logger.warning("从缓存获取战争统计数据失败，可能正在更新或API不可用")
-                return None
+                # 如果统一缓存没有数据，尝试从自己的缓存获取
+                data = await api_cache_manager.get_cached_data("war_stats")
+                if data:
+                    bot_logger.debug("从备用缓存获取战争统计数据")
+                    return data
+                else:
+                    bot_logger.warning("从缓存获取战争统计数据失败，可能正在更新或API不可用")
+                    return None
         except Exception as e:
             bot_logger.error(f"获取战争统计数据时发生异常: {e}", exc_info=True)
             return None
